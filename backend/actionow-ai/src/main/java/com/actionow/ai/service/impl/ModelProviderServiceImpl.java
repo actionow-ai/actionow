@@ -215,13 +215,17 @@ public class ModelProviderServiceImpl implements ModelProviderService {
             // 非 UUID 格式，按 pluginId → 名称 依次尝试解析
             log.info("findById called with non-UUID value '{}', trying pluginId/name fallback", id);
 
-            // 1. 尝试 pluginId 精确匹配（点号转连字符: seedream-4.5 → seedream-4-5）
-            String normalizedPluginId = id.replace('.', '-');
+            // 1. 尝试 pluginId 精确匹配（点号与空格均转连字符: "seedream 4.5" → "seedream-4-5"）
+            String normalizedPluginId = id.replace('.', '-').replace(' ', '-').toLowerCase(Locale.ROOT);
             List<ModelProvider> providers = findByPluginId(normalizedPluginId);
             if (!providers.isEmpty()) return Optional.of(providers.get(0));
 
             // 2. 尝试名称精确匹配（如 "Seedream 4.5"）
             providers = findByName(id);
+            if (!providers.isEmpty()) return Optional.of(providers.get(0));
+
+            // 3. 名称不区分大小写匹配（容忍 Agent 输出的 "seedream 4.5"）
+            providers = findByNameIgnoreCase(id);
             if (!providers.isEmpty()) return Optional.of(providers.get(0));
 
             return Optional.empty();
@@ -333,6 +337,23 @@ public class ModelProviderServiceImpl implements ModelProviderService {
         List<ModelProvider> providers = providerMapper.selectList(
             new LambdaQueryWrapper<ModelProvider>()
                 .eq(ModelProvider::getName, name)
+                .eq(ModelProvider::getDeleted, 0)
+        );
+        enrichWithChildTables(providers);
+        return providers;
+    }
+
+    /**
+     * 不区分大小写的名称匹配（Postgres LOWER 比较）。仅在 findById 回退阶段使用，
+     * 用于容忍 Agent/LLM 输出的 "seedream 4.5" 这类非规范大小写。
+     */
+    private List<ModelProvider> findByNameIgnoreCase(String name) {
+        if (name == null || name.isBlank()) {
+            return List.of();
+        }
+        List<ModelProvider> providers = providerMapper.selectList(
+            new LambdaQueryWrapper<ModelProvider>()
+                .apply("LOWER(name) = {0}", name.toLowerCase(Locale.ROOT))
                 .eq(ModelProvider::getDeleted, 0)
         );
         enrichWithChildTables(providers);
