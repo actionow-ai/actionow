@@ -235,11 +235,13 @@ cd actionow
 ./actionow.sh up          # 构建镜像并拉起完整生产栈
 ./actionow.sh status      # 查看容器状态
 ./actionow.sh backend rebuild xxx # 重新构建后端模块 ./actionow.sh backend rebuild ai
+./actionow.sh db migrate  # 将 docker/init-db/*.sql 中未应用的迁移补跑到活跃数据库（通过 t_migration_history 跟踪，非破坏性）
+./actionow.sh db reset    # 删除并重新初始化数据库（破坏性，委托 reset-db）
 ```
 
 启动完成后访问：http://localhost:3000
 
-**默认系统账号**（来自 `docker/init-db/02-system-seed.sql` 种子数据）：
+**默认系统账号**：
 
 | 用户名     | 密码            | 角色         |
 |------------|-----------------|--------------|

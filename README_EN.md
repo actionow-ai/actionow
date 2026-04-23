@@ -236,6 +236,8 @@ cd actionow
 ./actionow.sh up          # build images and bring up the full production stack
 ./actionow.sh status      # container status
 ./actionow.sh backend rebuild xxx # rebuild a backend module, e.g. ./actionow.sh backend rebuild ai
+./actionow.sh db migrate  # apply unapplied docker/init-db/*.sql to the running (or external) DB, tracked via t_migration_history
+./actionow.sh db reset    # destructive re-init (delegates to existing reset-db)
 ```
 
 Endpoints:
@@ -246,7 +248,7 @@ Endpoints:
 | API gateway   | http://localhost:8080/doc.html       |
 | Agent Swagger | http://localhost:8091/swagger-ui.html|
 
-**Default seeded accounts** (from `docker/init-db/02-system-seed.sql`):
+**Default seeded accounts:**
 
 | Username   | Password        | Role              |
 |------------|-----------------|-------------------|
