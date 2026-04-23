@@ -1319,7 +1319,7 @@ export function InspirationInputPanel({
         {/* Right: Prompt Card */}
         <Card variant="tertiary" className="relative min-w-0 flex-1 gap-0 border-white/10 bg-white/60 p-0 backdrop-blur-xl dark:bg-white/5">
           {/* Prompt editor with @-mention support */}
-          <div className="relative flex-1">
+          <div className="relative flex-1 overflow-hidden">
             <MentionPromptEditor
               value={prompt}
               onChange={onPromptChange}

@@ -276,8 +276,10 @@ export function useInspirationGenerate(sessionId: string | null) {
     []
   );
 
-  // Optimize prompt via TEXT provider streaming
-  const optimizePrompt = useCallback(async () => {
+  // Optimize prompt via TEXT provider streaming.
+  // Mirrors ai-generation behavior: keep the mask visible for the whole
+  // stream, only swap the prompt field once the final text is ready.
+  const optimizePrompt = useCallback(() => {
     if (!promptProvider || !prompt.trim()) return;
 
     try {
@@ -299,20 +301,23 @@ export function useInspirationGenerate(sessionId: string | null) {
           onProgress: () => {},
           onTextChunk: (delta) => {
             accumulated += delta;
-            setPrompt(accumulated);
           },
           onFinished: (outputs) => {
-            if (outputs) {
-              const text =
-                (typeof outputs.textAccumulated === "string" && outputs.textAccumulated) ||
-                accumulated;
-              if (text) setPrompt(text.trim());
+            const finalText =
+              (outputs && typeof outputs.textAccumulated === "string" && outputs.textAccumulated) ||
+              accumulated;
+            if (finalText) {
+              setPrompt(finalText.trim());
+              setHasGeneratedPrompt(true);
             }
-            setHasGeneratedPrompt(true);
+            setIsOptimizingPrompt(false);
+            promptStreamRef.current = null;
           },
           onError: (_code, message) => {
             console.error("Prompt optimization failed:", message);
             toast.danger(t("input.optimize") + " failed");
+            setIsOptimizingPrompt(false);
+            promptStreamRef.current = null;
           },
         }
       );
@@ -321,11 +326,10 @@ export function useInspirationGenerate(sessionId: string | null) {
     } catch (error) {
       console.error("Prompt optimization failed:", error);
       toast.danger(getErrorFromException(error, locale));
-    } finally {
       setIsOptimizingPrompt(false);
       promptStreamRef.current = null;
     }
-  }, [promptProvider, prompt, t]);
+  }, [promptProvider, prompt, t, locale]);
 
   // Submit generation
   const submitGeneration = useCallback(async () => {
