@@ -137,6 +137,9 @@ public class GroovySandboxConfig {
             "groovy.lang.Tuple2",
             "groovy.lang.Tuple3",
             "groovy.lang.Tuple4",
+            // Groovy 语言层运行时辅助类（运算符派发：==~、=~、<=>、as 等都走这里）
+            // 方法名/类名黑名单仍会先生效，没有逃逸面
+            "org.codehaus.groovy.runtime.*",
             // 数组字面量（[1,2,3] as int[] 等）
             "[Ljava.lang.Object;",
             "[Ljava.lang.String;",
@@ -391,9 +394,16 @@ public class GroovySandboxConfig {
         if (allowedBindingClasses.contains(receiverClass)) {
             return true;
         }
-        // 检查白名单
-        if (allowedReceiverClasses.contains(receiverClass)) {
-            return true;
+        // 精确匹配 + 包通配（".*" 后缀）匹配
+        for (String allowed : allowedReceiverClasses) {
+            if (allowed.endsWith(".*")) {
+                String prefix = allowed.substring(0, allowed.length() - 1);
+                if (receiverClass.startsWith(prefix)) {
+                    return true;
+                }
+            } else if (allowed.equals(receiverClass)) {
+                return true;
+            }
         }
         // 放行 Throwable 子类的只读方法（脚本普遍使用 catch (Exception e) { e.getMessage() }），
         // 类型多变（RuntimeException / IllegalArgumentException / ConnectException / MissingPropertyException ...），
