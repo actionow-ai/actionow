@@ -23,3 +23,4 @@ export * from "./batch-job.dto";
 export * from "./script-permission.dto";
 export * from "./billing.dto";
 export * from "./inspiration.dto";
+export * from "./gift-code.dto";

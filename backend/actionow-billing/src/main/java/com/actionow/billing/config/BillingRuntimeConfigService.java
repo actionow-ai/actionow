@@ -22,6 +22,7 @@ public class BillingRuntimeConfigService extends RuntimeConfigService {
     public static final String MINOR_PER_MAJOR_UNIT     = "runtime.billing.minor_per_major_unit";
     public static final String SUBSCRIPTION_CURRENCY    = "runtime.billing.subscription_currency";
     public static final String SUPPORTED_CURRENCIES     = "runtime.billing.supported_currencies";
+    public static final String ENABLED_PAYMENT_PROVIDERS = "runtime.billing.enabled_payment_providers";
 
     public BillingRuntimeConfigService(StringRedisTemplate redisTemplate,
                                         RedisMessageListenerContainer listenerContainer) {
@@ -39,6 +40,32 @@ public class BillingRuntimeConfigService extends RuntimeConfigService {
         defaults.put(MINOR_PER_MAJOR_UNIT, "100");
         defaults.put(SUBSCRIPTION_CURRENCY, "USD");
         defaults.put(SUPPORTED_CURRENCIES, "USD,CNY,EUR,GBP,JPY");
+        defaults.put(ENABLED_PAYMENT_PROVIDERS, "STRIPE,WECHATPAY");
+    }
+
+    /**
+     * 当前启用的支付渠道集合（管理员可在系统配置中调整）
+     */
+    public java.util.List<String> getEnabledPaymentProviders() {
+        String raw = getString(ENABLED_PAYMENT_PROVIDERS);
+        if (raw == null || raw.isBlank()) {
+            return java.util.Collections.emptyList();
+        }
+        java.util.List<String> list = new java.util.ArrayList<>();
+        for (String token : raw.split(",")) {
+            String normalized = token.trim().toUpperCase();
+            if (!normalized.isEmpty()) {
+                list.add(normalized);
+            }
+        }
+        return list;
+    }
+
+    public boolean isPaymentProviderEnabled(String provider) {
+        if (provider == null || provider.isBlank()) {
+            return false;
+        }
+        return getEnabledPaymentProviders().contains(provider.trim().toUpperCase());
     }
 
     // ==================== Named Getters ====================

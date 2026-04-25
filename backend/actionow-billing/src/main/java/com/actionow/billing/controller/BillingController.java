@@ -1,5 +1,6 @@
 package com.actionow.billing.controller;
 
+import com.actionow.billing.config.BillingRuntimeConfigService;
 import com.actionow.billing.dto.*;
 import com.actionow.billing.service.OrderBillingService;
 import com.actionow.billing.service.SubscriptionBillingService;
@@ -11,6 +12,8 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 /**
  * 计费对外接口
  */
@@ -21,6 +24,16 @@ public class BillingController {
 
     private final OrderBillingService orderBillingService;
     private final SubscriptionBillingService subscriptionBillingService;
+    private final BillingRuntimeConfigService billingRuntimeConfig;
+
+    /**
+     * 当前启用的支付渠道（用于前端动态渲染充值入口）
+     */
+    @GetMapping("/payment-providers")
+    @RequireWorkspaceMember(minRole = WorkspaceRole.MEMBER)
+    public Result<List<String>> listEnabledPaymentProviders() {
+        return Result.success(billingRuntimeConfig.getEnabledPaymentProviders());
+    }
 
     @PostMapping("/topups/orders")
     @RequireWorkspaceMember(minRole = WorkspaceRole.ADMIN)

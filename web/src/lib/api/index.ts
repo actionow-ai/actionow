@@ -71,6 +71,9 @@ export { scriptPermissionService } from "./services";
 // Billing service
 export { billingService } from "./services";
 
+// Gift code service
+export { giftCodeService } from "./services";
+
 // Error utilities
 export { getErrorMessage, getErrorFromException } from "./errors";
 

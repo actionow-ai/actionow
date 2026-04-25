@@ -38,7 +38,7 @@ import {
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useSearchParams } from "next/navigation";
-import { walletService, billingService, getErrorFromException } from "@/lib/api";
+import { walletService, billingService, giftCodeService, getErrorFromException } from "@/lib/api";
 import { useWorkspace } from "@/components/providers/workspace-provider";
 import { useWalletUpdates } from "@/lib/websocket";
 import { useWalletActions } from "@/lib/stores/wallet-store";
@@ -158,6 +158,14 @@ export default function WalletPage() {
   const [paymentError, setPaymentError] = useState<string>("");
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [topupRates, setTopupRates] = useState<Record<string, TopupRateConfig>>({});
+  const [enabledProviders, setEnabledProviders] = useState<PaymentProvider[]>(["STRIPE", "WECHATPAY"]);
+
+  // ── Gift code redeem ──────────────────────────────────────────────────────
+  const [showRedeemModal, setShowRedeemModal] = useState(false);
+  const [redeemCode, setRedeemCode] = useState("");
+  const [isRedeeming, setIsRedeeming] = useState(false);
+  const [redeemError, setRedeemError] = useState<string>("");
+  const [redeemSuccessPoints, setRedeemSuccessPoints] = useState<number | null>(null);
 
   useEffect(() => {
     const loadData = async () => {
@@ -313,6 +321,26 @@ export default function WalletPage() {
     fetchRate(currency);
   }, [showTopupModal, selectedProvider, fetchRate]);
 
+  // Fetch enabled payment providers when topup modal opens
+  useEffect(() => {
+    if (!showTopupModal) return;
+    let cancelled = false;
+    billingService
+      .getEnabledPaymentProviders()
+      .then((list) => {
+        if (cancelled) return;
+        const filtered = (list || []).filter((p): p is PaymentProvider => p === "STRIPE" || p === "WECHATPAY");
+        if (filtered.length === 0) {
+          setEnabledProviders(["STRIPE", "WECHATPAY"]);
+          return;
+        }
+        setEnabledProviders(filtered);
+        setSelectedProvider((prev) => (filtered.includes(prev) ? prev : filtered[0]));
+      })
+      .catch(() => { if (!cancelled) setEnabledProviders(["STRIPE", "WECHATPAY"]); });
+    return () => { cancelled = true; };
+  }, [showTopupModal]);
+
   // Compute points preview from rate
   const pointsPreview = useMemo(() => {
     const amount = parseFloat(topupAmount);
@@ -434,6 +462,49 @@ export default function WalletPage() {
     }
   };
 
+  const resetRedeemModal = useCallback(() => {
+    setRedeemCode("");
+    setRedeemError("");
+    setRedeemSuccessPoints(null);
+    setIsRedeeming(false);
+  }, []);
+
+  const handleRedeem = async () => {
+    const code = redeemCode.trim();
+    if (!code) {
+      setRedeemError("请输入礼包码");
+      return;
+    }
+    setRedeemError("");
+    try {
+      setIsRedeeming(true);
+      const res = await giftCodeService.redeem({ code });
+      setRedeemSuccessPoints(res.points);
+      // Refresh wallet & transactions
+      try {
+        const w = await walletService.getWallet();
+        setWallet(w);
+        setBalance(w.available, w.frozen);
+      } catch { /* ignore */ }
+      try {
+        const list = await walletService.getTransactions({
+          current: 1,
+          size: pageSize,
+          type: filterType || undefined,
+        });
+        setTransactions(list.records);
+        setCurrentPage(1);
+        setTotalPages(list.pages);
+        setTotalRecords(list.total);
+      } catch { /* ignore */ }
+      toast.success(`兑换成功，+${res.points.toLocaleString()} 积分`);
+    } catch (error) {
+      setRedeemError(getErrorFromException(error, locale));
+    } finally {
+      setIsRedeeming(false);
+    }
+  };
+
   const formatAmount = (amount: number) => Math.abs(amount).toLocaleString();
 
   const handlePageChange = (page: number) => {
@@ -530,6 +601,10 @@ export default function WalletPage() {
             <Button size="sm" onPress={() => setShowTopupModal(true)}>
               <CreditCard className="size-4" />
               充值
+            </Button>
+            <Button variant="secondary" size="sm" onPress={() => setShowRedeemModal(true)}>
+              <Gift className="size-4" />
+              礼包码兑换
             </Button>
             <Button variant="secondary" size="sm" isDisabled>
               <ArrowLeftRight className="size-4" />
@@ -822,39 +897,52 @@ export default function WalletPage() {
               {topupStep === "select" && (
                 <>
                   {/* Payment channel selection */}
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-foreground">选择支付方式</label>
-                    <div className="grid grid-cols-2 gap-3">
-                      <button
-                        onClick={() => { setSelectedProvider("STRIPE"); setTopupAmount(""); }}
-                        className={`flex flex-col items-center gap-2 rounded-xl border-2 p-4 transition-all ${
-                          selectedProvider === "STRIPE"
-                            ? "border-accent bg-accent/5 shadow-sm"
-                            : "border-border hover:border-accent/40"
-                        }`}
-                      >
-                        <CreditCard className={`size-6 ${selectedProvider === "STRIPE" ? "text-accent" : "text-muted"}`} />
-                        <span className={`text-sm font-medium ${selectedProvider === "STRIPE" ? "text-accent" : "text-foreground"}`}>
-                          Stripe
-                        </span>
-                        <span className="text-xs text-muted">信用卡 / USD</span>
-                      </button>
-                      <button
-                        onClick={() => { setSelectedProvider("WECHATPAY"); setTopupAmount(""); }}
-                        className={`flex flex-col items-center gap-2 rounded-xl border-2 p-4 transition-all ${
-                          selectedProvider === "WECHATPAY"
-                            ? "border-green-500 bg-green-500/5 shadow-sm"
-                            : "border-border hover:border-green-500/40"
-                        }`}
-                      >
-                        <QrCode className={`size-6 ${selectedProvider === "WECHATPAY" ? "text-green-500" : "text-muted"}`} />
-                        <span className={`text-sm font-medium ${selectedProvider === "WECHATPAY" ? "text-green-600" : "text-foreground"}`}>
-                          微信支付
-                        </span>
-                        <span className="text-xs text-muted">扫码支付 / CNY</span>
-                      </button>
+                  {enabledProviders.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-border bg-surface p-4 text-center text-sm text-muted">
+                      管理员暂未启用任何支付渠道
                     </div>
-                  </div>
+                  ) : (
+                    <div>
+                      <label className="mb-2 block text-sm font-medium text-foreground">选择支付方式</label>
+                      <div
+                        className="grid gap-3"
+                        style={{ gridTemplateColumns: `repeat(${enabledProviders.length}, minmax(0, 1fr))` }}
+                      >
+                        {enabledProviders.includes("STRIPE") && (
+                          <button
+                            onClick={() => { setSelectedProvider("STRIPE"); setTopupAmount(""); }}
+                            className={`flex flex-col items-center gap-2 rounded-xl border-2 p-4 transition-all ${
+                              selectedProvider === "STRIPE"
+                                ? "border-accent bg-accent/5 shadow-sm"
+                                : "border-border hover:border-accent/40"
+                            }`}
+                          >
+                            <CreditCard className={`size-6 ${selectedProvider === "STRIPE" ? "text-accent" : "text-muted"}`} />
+                            <span className={`text-sm font-medium ${selectedProvider === "STRIPE" ? "text-accent" : "text-foreground"}`}>
+                              Stripe
+                            </span>
+                            <span className="text-xs text-muted">信用卡 / USD</span>
+                          </button>
+                        )}
+                        {enabledProviders.includes("WECHATPAY") && (
+                          <button
+                            onClick={() => { setSelectedProvider("WECHATPAY"); setTopupAmount(""); }}
+                            className={`flex flex-col items-center gap-2 rounded-xl border-2 p-4 transition-all ${
+                              selectedProvider === "WECHATPAY"
+                                ? "border-green-500 bg-green-500/5 shadow-sm"
+                                : "border-border hover:border-green-500/40"
+                            }`}
+                          >
+                            <QrCode className={`size-6 ${selectedProvider === "WECHATPAY" ? "text-green-500" : "text-muted"}`} />
+                            <span className={`text-sm font-medium ${selectedProvider === "WECHATPAY" ? "text-green-600" : "text-foreground"}`}>
+                              微信支付
+                            </span>
+                            <span className="text-xs text-muted">扫码支付 / CNY</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Amount input */}
                   <div>
@@ -974,7 +1062,7 @@ export default function WalletPage() {
                   </Button>
                   <Button
                     onPress={handleTopup}
-                    isDisabled={!topupAmount || parseFloat(topupAmount) <= 0}
+                    isDisabled={!topupAmount || parseFloat(topupAmount) <= 0 || enabledProviders.length === 0}
                     isPending={isTopuping}
                   >
                     {({isPending}) => (<>{isPending ? <Spinner color="current" size="sm" /> : null}{selectedProvider === "WECHATPAY" ? "生成支付二维码" : "前往 Stripe 支付"}{topupAmount && parseFloat(topupAmount) > 0 && ` ${currencySymbol}${topupAmount}`}</>)}
@@ -998,6 +1086,110 @@ export default function WalletPage() {
                   </Button>
                   <Button onPress={() => { setPaymentError(""); setTopupStep("select"); }}>
                     重试
+                  </Button>
+                </>
+              )}
+            </Modal.Footer>
+          </Modal.Dialog>
+        </Modal.Container>
+      </Modal.Backdrop>
+
+      {/* Gift code redemption modal */}
+      <Modal.Backdrop
+        isOpen={showRedeemModal}
+        onOpenChange={(open) => {
+          if (!open) resetRedeemModal();
+          setShowRedeemModal(open);
+        }}
+      >
+        <Modal.Container size="sm">
+          <Modal.Dialog>
+            <Modal.CloseTrigger />
+            <Modal.Header>
+              <Modal.Heading>
+                {redeemSuccessPoints !== null ? "兑换成功" : "礼包码兑换"}
+              </Modal.Heading>
+            </Modal.Header>
+            <Modal.Body className="space-y-4">
+              {redeemSuccessPoints !== null ? (
+                <div className="flex flex-col items-center gap-4 py-4">
+                  <div className="flex size-16 items-center justify-center rounded-full bg-success/10">
+                    <Gift className="size-8 text-success" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Zap className="size-5 text-accent" />
+                    <span className="text-2xl font-bold text-accent">
+                      +{redeemSuccessPoints.toLocaleString()}
+                    </span>
+                    <span className="text-sm text-muted">积分已到账</span>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-foreground">
+                      礼包码
+                    </label>
+                    <input
+                      type="text"
+                      value={redeemCode}
+                      onChange={(e) => {
+                        setRedeemCode(e.target.value.toUpperCase());
+                        if (redeemError) setRedeemError("");
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && redeemCode.trim() && !isRedeeming) {
+                          handleRedeem();
+                        }
+                      }}
+                      placeholder="请输入礼包码"
+                      autoFocus
+                      className="w-full rounded-lg border border-border bg-surface px-4 py-3 font-mono text-base font-semibold tracking-wider text-foreground placeholder:text-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                    />
+                    {redeemError && (
+                      <p className="mt-2 text-xs text-danger">{redeemError}</p>
+                    )}
+                  </div>
+                  <div className="rounded-lg bg-surface-secondary p-3">
+                    <p className="text-xs text-muted">
+                      兑换的积分将进入当前工作空间钱包，每个礼包码每位用户仅可兑换一次。
+                    </p>
+                  </div>
+                </>
+              )}
+            </Modal.Body>
+            <Modal.Footer>
+              {redeemSuccessPoints !== null ? (
+                <Button
+                  onPress={() => {
+                    resetRedeemModal();
+                    setShowRedeemModal(false);
+                  }}
+                >
+                  完成
+                </Button>
+              ) : (
+                <>
+                  <Button
+                    variant="secondary"
+                    onPress={() => {
+                      resetRedeemModal();
+                      setShowRedeemModal(false);
+                    }}
+                  >
+                    取消
+                  </Button>
+                  <Button
+                    onPress={handleRedeem}
+                    isPending={isRedeeming}
+                    isDisabled={!redeemCode.trim()}
+                  >
+                    {({ isPending }) => (
+                      <>
+                        {isPending ? <Spinner color="current" size="sm" /> : null}
+                        立即兑换
+                      </>
+                    )}
                   </Button>
                 </>
               )}

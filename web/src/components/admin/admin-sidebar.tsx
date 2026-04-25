@@ -6,7 +6,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useLocale } from "next-intl";
 import { Button } from "@heroui/react";
-import { ArrowLeft, Bot, Brain, Code2, Cpu, /* GitBranch, */ PanelLeft, PanelLeftClose, Settings2, ShieldCheck, Sliders, Wrench } from "lucide-react";
+import { ArrowLeft, Bot, Brain, Code2, Cpu, Gift, /* GitBranch, */ PanelLeft, PanelLeftClose, Settings2, ShieldCheck, Sliders, Wrench } from "lucide-react";
 import { LOCALES } from "@/i18n/config";
 
 type MenuItem = {
@@ -114,6 +114,13 @@ export function AdminSidebar() {
           icon: Settings2,
           href: `/${locale}/admin/system/configs`,
           matchPath: "/admin/system/configs",
+        },
+        {
+          key: "giftCodes",
+          label: "礼包码管理",
+          icon: Gift,
+          href: `/${locale}/admin/system/gift-codes`,
+          matchPath: "/admin/system/gift-codes",
         },
       ],
     },

@@ -13,6 +13,8 @@ spring:
           instances:
             actionow-workspace:
               - uri: ${WORKSPACE_SERVICE_URL:http://actionow-workspace:8082}
+            actionow-wallet:
+              - uri: ${WALLET_SERVICE_URL:http://actionow-wallet:8083}
 
   # 数据源配置
   datasource:

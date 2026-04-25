@@ -24,3 +24,4 @@ export { scriptPermissionService } from "./script-permission.service";
 export { billingService } from "./billing.service";
 export { inspirationService } from "./inspiration.service";
 export { notificationService } from "./notification.service";
+export { giftCodeService } from "./gift-code.service";

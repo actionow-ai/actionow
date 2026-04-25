@@ -46,6 +46,10 @@ export const billingService = {
       params: { currency },
     }),
 
+  /** Get list of enabled payment providers */
+  getEnabledPaymentProviders: () =>
+    api.get<string[]>(`${BILLING_BASE}/payment-providers`),
+
   /** Admin: list plan prices */
   listPlans: (provider?: string) =>
     api.get<PlanPriceResponse[]>(`${BILLING_BASE}/admin/plans`, {
