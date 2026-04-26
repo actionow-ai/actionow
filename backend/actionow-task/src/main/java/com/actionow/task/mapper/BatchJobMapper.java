@@ -9,6 +9,7 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Update;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -53,13 +54,17 @@ public interface BatchJobMapper extends BaseMapper<BatchJob> {
 
     /**
      * 原子更新计数器（完成项+1）
+     * updated_at 由调用方传入 LocalDateTime.now()，与 BaseEntity 自动填充保持同一时区语义，
+     * 避免与 SQL NOW() 混用导致 isStaleBatch 出现 8 小时偏差。
      */
     @Update("UPDATE t_batch_job SET completed_items = completed_items + 1, " +
             "actual_credits = actual_credits + #{creditCost}, " +
             "progress = CASE WHEN total_items > 0 THEN " +
             "  ((completed_items + 1 + failed_items + skipped_items) * 100 / total_items) ELSE 0 END, " +
-            "updated_at = NOW() WHERE id = #{batchJobId} AND deleted = 0")
-    int incrementCompleted(@Param("batchJobId") String batchJobId, @Param("creditCost") long creditCost);
+            "updated_at = #{updatedAt} WHERE id = #{batchJobId} AND deleted = 0")
+    int incrementCompleted(@Param("batchJobId") String batchJobId,
+                           @Param("creditCost") long creditCost,
+                           @Param("updatedAt") LocalDateTime updatedAt);
 
     /**
      * 原子更新计数器（失败项+1）
@@ -67,8 +72,9 @@ public interface BatchJobMapper extends BaseMapper<BatchJob> {
     @Update("UPDATE t_batch_job SET failed_items = failed_items + 1, " +
             "progress = CASE WHEN total_items > 0 THEN " +
             "  ((completed_items + failed_items + 1 + skipped_items) * 100 / total_items) ELSE 0 END, " +
-            "updated_at = NOW() WHERE id = #{batchJobId} AND deleted = 0")
-    int incrementFailed(@Param("batchJobId") String batchJobId);
+            "updated_at = #{updatedAt} WHERE id = #{batchJobId} AND deleted = 0")
+    int incrementFailed(@Param("batchJobId") String batchJobId,
+                        @Param("updatedAt") LocalDateTime updatedAt);
 
     /**
      * 原子更新计数器（跳过项+1）
@@ -76,6 +82,7 @@ public interface BatchJobMapper extends BaseMapper<BatchJob> {
     @Update("UPDATE t_batch_job SET skipped_items = skipped_items + 1, " +
             "progress = CASE WHEN total_items > 0 THEN " +
             "  ((completed_items + failed_items + skipped_items + 1) * 100 / total_items) ELSE 0 END, " +
-            "updated_at = NOW() WHERE id = #{batchJobId} AND deleted = 0")
-    int incrementSkipped(@Param("batchJobId") String batchJobId);
+            "updated_at = #{updatedAt} WHERE id = #{batchJobId} AND deleted = 0")
+    int incrementSkipped(@Param("batchJobId") String batchJobId,
+                         @Param("updatedAt") LocalDateTime updatedAt);
 }

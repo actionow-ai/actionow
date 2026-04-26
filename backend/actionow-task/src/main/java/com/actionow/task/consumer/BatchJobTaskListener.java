@@ -15,6 +15,7 @@ import com.actionow.task.mapper.BatchJobItemMapper;
 import com.actionow.task.mapper.BatchJobMapper;
 import com.actionow.task.mapper.TaskMapper;
 import com.actionow.task.service.BatchConcurrencyService;
+import com.actionow.task.service.BatchJobMissionNotifier;
 import com.actionow.task.service.BatchJobScanStateService;
 import com.actionow.task.service.BatchJobSseService;
 import com.actionow.task.service.PipelineEngine;
@@ -51,6 +52,7 @@ public class BatchJobTaskListener {
     private final MessageProducer messageProducer;
     private final PipelineEngine pipelineEngine;
     private final ConsumerRetryHelper retryHelper;
+    private final BatchJobMissionNotifier missionNotifier;
 
     /**
      * 处理批量作业内 task 完成/失败回调
@@ -157,7 +159,7 @@ public class BatchJobTaskListener {
             batchJobItemMapper.updateById(item); // 更新 params 字段（status 已与 DB 一致）
         }
 
-        batchJobMapper.incrementCompleted(job.getId(), creditCost);
+        batchJobMapper.incrementCompleted(job.getId(), creditCost, LocalDateTime.now());
         sseService.sendItemCompleted(job.getWorkspaceId(), item);
 
         log.info("批量子项完成: itemId={}, taskId={}, creditCost={}",
@@ -243,7 +245,7 @@ public class BatchJobTaskListener {
         item.setUpdatedAt(LocalDateTime.now());
         batchJobItemMapper.updateById(item);
 
-        batchJobMapper.incrementFailed(job.getId());
+        batchJobMapper.incrementFailed(job.getId(), LocalDateTime.now());
         sseService.sendItemFailed(job.getWorkspaceId(), item);
 
         log.info("批量子项失败: itemId={}, taskId={}, error={}",
@@ -263,7 +265,7 @@ public class BatchJobTaskListener {
                         TaskConstants.BatchItemStatus.PENDING, TaskConstants.BatchItemStatus.CANCELLED);
 
                 sseService.sendBatchFailed(currentJob, "子项失败导致作业停止: " + errorMessage);
-                notifyMissionIfNeeded(currentJob);
+                missionNotifier.notifyMissionIfNeeded(currentJob);
             }
         }
     }
@@ -298,37 +300,7 @@ public class BatchJobTaskListener {
                 job.getId(), job.getCompletedItems(), job.getFailedItems(), job.getSkippedItems());
 
         // 通知 Mission
-        notifyMissionIfNeeded(job);
-    }
-
-    /**
-     * 如果批量作业关联了 Mission，发送回调消息
-     */
-    private void notifyMissionIfNeeded(BatchJob job) {
-        if (!StringUtils.hasText(job.getMissionId())) {
-            return;
-        }
-
-        Map<String, Object> payload = Map.of(
-                "missionId", job.getMissionId(),
-                "batchJobId", job.getId(),
-                "status", job.getStatus(),
-                "completedItems", job.getCompletedItems(),
-                "failedItems", job.getFailedItems(),
-                "skippedItems", job.getSkippedItems(),
-                "actualCredits", job.getActualCredits() != null ? job.getActualCredits() : 0
-        );
-
-        MessageWrapper<Map<String, Object>> message = MessageWrapper.<Map<String, Object>>builder()
-                .messageId(UuidGenerator.generateUuidV7())
-                .messageType(MqConstants.BatchJob.MSG_COMPLETED)
-                .payload(payload)
-                .workspaceId(job.getWorkspaceId())
-                .senderId(job.getCreatorId())
-                .build();
-
-        messageProducer.sendDirect(MqConstants.BatchJob.ROUTING_COMPLETED, message);
-        log.info("批量作业完成通知已发送: missionId={}, batchJobId={}", job.getMissionId(), job.getId());
+        missionNotifier.notifyMissionIfNeeded(job);
     }
 
     private void triggerBatchContinuation(String batchJobId) {

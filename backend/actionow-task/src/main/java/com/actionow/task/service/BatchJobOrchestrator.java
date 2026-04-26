@@ -48,6 +48,7 @@ public class BatchJobOrchestrator {
     private final BatchConcurrencyService concurrencyService;
     private final BatchJobSseService sseService;
     private final ScopeExpansionService scopeExpansionService;
+    private final BatchJobMissionNotifier missionNotifier;
     private final @Lazy PipelineEngine pipelineEngine;
 
     @Setter(onMethod_ = {@Autowired, @Lazy})
@@ -329,6 +330,9 @@ public class BatchJobOrchestrator {
 
         concurrencyService.cleanup(batchJobId);
         log.info("批量作业已取消: id={}", batchJobId);
+
+        // 通知 Mission，避免关联 Mission 永久 WAITING
+        missionNotifier.notifyMissionIfNeeded(job);
     }
 
     /**

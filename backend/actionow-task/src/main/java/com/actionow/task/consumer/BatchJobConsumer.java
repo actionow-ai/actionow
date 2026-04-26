@@ -20,6 +20,7 @@ import com.actionow.task.mapper.TaskMapper;
 import com.actionow.task.config.TaskRuntimeConfigService;
 import com.actionow.task.service.AiGenerationFacade;
 import com.actionow.task.service.BatchConcurrencyService;
+import com.actionow.task.service.BatchJobMissionNotifier;
 import com.actionow.task.service.BatchJobScanStateService;
 import com.actionow.task.service.BatchJobSseService;
 import com.rabbitmq.client.Channel;
@@ -57,6 +58,7 @@ public class BatchJobConsumer {
     private final AssetFeignClient assetFeignClient;
     private final TaskRuntimeConfigService runtimeConfig;
     private final ConsumerRetryHelper retryHelper;
+    private final BatchJobMissionNotifier missionNotifier;
 
     /** 连续空闲扫描次数，用于自动降频（AtomicInteger 保证线程安全） */
     private final java.util.concurrent.atomic.AtomicInteger idleCount = new java.util.concurrent.atomic.AtomicInteger(0);
@@ -340,7 +342,7 @@ public class BatchJobConsumer {
         item.setUpdatedAt(LocalDateTime.now());
         batchJobItemMapper.updateById(item);
 
-        batchJobMapper.incrementFailed(job.getId());
+        batchJobMapper.incrementFailed(job.getId(), LocalDateTime.now());
         sseService.sendItemFailed(job.getWorkspaceId(), item);
 
         // 错误策略：STOP
@@ -356,6 +358,7 @@ public class BatchJobConsumer {
                     TaskConstants.BatchItemStatus.PENDING, TaskConstants.BatchItemStatus.CANCELLED);
 
             sseService.sendBatchFailed(job, "子项失败导致作业停止: " + errorMessage);
+            missionNotifier.notifyMissionIfNeeded(job);
         }
     }
 
@@ -369,7 +372,7 @@ public class BatchJobConsumer {
         item.setUpdatedAt(LocalDateTime.now());
         batchJobItemMapper.updateById(item);
 
-        batchJobMapper.incrementSkipped(job.getId());
+        batchJobMapper.incrementSkipped(job.getId(), LocalDateTime.now());
         sseService.sendItemSkipped(job.getWorkspaceId(), item);
     }
 
@@ -409,7 +412,7 @@ public class BatchJobConsumer {
                 return true; // 已被处理，直接返回
             }
 
-            batchJobMapper.incrementCompleted(job.getId(), creditCost);
+            batchJobMapper.incrementCompleted(job.getId(), creditCost, LocalDateTime.now());
             concurrencyService.release(job.getId(), job.getWorkspaceId());
             scanStateService.markActive(job.getId());
             sseService.sendItemCompleted(job.getWorkspaceId(), item);
@@ -465,6 +468,8 @@ public class BatchJobConsumer {
         log.info("批量作业由扫描器完成（MQ 回调安全网）: id={}, completed={}, failed={}, skipped={}",
                 currentJob.getId(), currentJob.getCompletedItems(),
                 currentJob.getFailedItems(), currentJob.getSkippedItems());
+
+        missionNotifier.notifyMissionIfNeeded(currentJob);
     }
 
     private boolean hasUnfinishedItems(BatchJob job) {
@@ -515,12 +520,19 @@ public class BatchJobConsumer {
         currentJob.setCompletedAt(LocalDateTime.now());
         batchJobMapper.updateById(currentJob);
 
+        // 取消所有未提交的 PENDING items，防止扫描器再次拾取
+        batchJobItemMapper.batchUpdateStatus(currentJob.getId(),
+                TaskConstants.BatchItemStatus.PENDING, TaskConstants.BatchItemStatus.CANCELLED);
+
         scanStateService.clear(currentJob.getId());
         concurrencyService.cleanup(currentJob.getId());
         sseService.sendBatchFailed(currentJob, reason);
 
         log.warn("批量作业长时间无进展，已标记失败: batchJobId={}, reason={}, updatedAt={}",
                 currentJob.getId(), reason, currentJob.getUpdatedAt());
+
+        // 必须通知 Mission，否则关联 Mission 会永久卡在 WAITING
+        missionNotifier.notifyMissionIfNeeded(currentJob);
     }
 
     /**
