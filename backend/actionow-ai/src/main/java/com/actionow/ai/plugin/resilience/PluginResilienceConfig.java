@@ -29,13 +29,10 @@ import java.util.concurrent.TimeoutException;
 @Component
 public class PluginResilienceConfig {
 
-    // 默认配置
+    // 默认配置（仅用于注册中心初始化默认值；运行时实际取值来自 AiRuntimeConfigService，可热更新）
     private static final int DEFAULT_MAX_RETRIES = 3;
     private static final long DEFAULT_RETRY_WAIT_MS = 1000;
     private static final int DEFAULT_RATE_LIMIT = 60;
-    private static final int DEFAULT_RATE_LIMIT_REFRESH_PERIOD_SECONDS = 60;
-    private static final float DEFAULT_FAILURE_RATE_THRESHOLD = 50.0f;
-    private static final int DEFAULT_WAIT_DURATION_IN_OPEN_STATE_SECONDS = 30;
 
     // 注册中心
     private final RetryRegistry retryRegistry;
@@ -51,7 +48,8 @@ public class PluginResilienceConfig {
 
     public PluginResilienceConfig(AiRuntimeConfigService runtimeConfig) {
         this.runtimeConfig = runtimeConfig;
-        // 创建默认配置的注册中心
+        // 注册中心仅用静态默认值初始化；每个 Provider 的 Retry/RateLimiter/CircuitBreaker
+        // 在 getOrCreate* 中按 runtimeConfig 当时取值构建并缓存，热更新需 clearCache。
         RetryConfig defaultRetryConfig = RetryConfig.custom()
             .maxAttempts(DEFAULT_MAX_RETRIES)
             .waitDuration(Duration.ofMillis(DEFAULT_RETRY_WAIT_MS))
@@ -62,23 +60,30 @@ public class PluginResilienceConfig {
 
         RateLimiterConfig defaultRateLimiterConfig = RateLimiterConfig.custom()
             .limitForPeriod(DEFAULT_RATE_LIMIT)
-            .limitRefreshPeriod(Duration.ofSeconds(DEFAULT_RATE_LIMIT_REFRESH_PERIOD_SECONDS))
+            .limitRefreshPeriod(Duration.ofSeconds(runtimeConfig.getRateLimitRefreshPeriodSeconds()))
             .timeoutDuration(Duration.ofSeconds(10))
             .build();
         this.rateLimiterRegistry = RateLimiterRegistry.of(defaultRateLimiterConfig);
 
         CircuitBreakerConfig defaultCircuitBreakerConfig = CircuitBreakerConfig.custom()
-            .failureRateThreshold(DEFAULT_FAILURE_RATE_THRESHOLD)
-            .waitDurationInOpenState(Duration.ofSeconds(DEFAULT_WAIT_DURATION_IN_OPEN_STATE_SECONDS))
-            .slidingWindowSize(10)
-            .minimumNumberOfCalls(5)
-            .permittedNumberOfCallsInHalfOpenState(3)
+            .failureRateThreshold(runtimeConfig.getFailureRateThreshold())
+            .waitDurationInOpenState(Duration.ofSeconds(runtimeConfig.getCbWaitDurationOpenStateSeconds()))
+            .slidingWindowSize(runtimeConfig.getCbSlidingWindowSize())
+            .minimumNumberOfCalls(runtimeConfig.getCbMinimumCalls())
+            .permittedNumberOfCallsInHalfOpenState(runtimeConfig.getCbHalfOpenPermittedCalls())
             .recordExceptions(IOException.class, TimeoutException.class)
             .recordException(this::shouldRecordAsFailure)
             .build();
         this.circuitBreakerRegistry = CircuitBreakerRegistry.of(defaultCircuitBreakerConfig);
 
-        log.info("PluginResilienceConfig initialized with Resilience4j");
+        log.info("PluginResilienceConfig initialized: cb_slidingWindow={}, cb_minimumCalls={}, cb_halfOpenPermitted={}, cb_waitOpenSec={}, failureRateThreshold={}, retryWaitMs={}, rateLimitRefreshSec={}",
+            runtimeConfig.getCbSlidingWindowSize(),
+            runtimeConfig.getCbMinimumCalls(),
+            runtimeConfig.getCbHalfOpenPermittedCalls(),
+            runtimeConfig.getCbWaitDurationOpenStateSeconds(),
+            runtimeConfig.getFailureRateThreshold(),
+            runtimeConfig.getRetryWaitDurationMs(),
+            runtimeConfig.getRateLimitRefreshPeriodSeconds());
     }
 
     /**
@@ -93,9 +98,10 @@ public class PluginResilienceConfig {
         String key = providerId + "_retry";
         return retryCache.computeIfAbsent(key, k -> {
             int effectiveMaxRetries = maxRetries > 0 ? maxRetries : runtimeConfig.getDefaultMaxRetries();
+            long effectiveWaitMs = waitDurationMs > 0 ? waitDurationMs : runtimeConfig.getRetryWaitDurationMs();
             RetryConfig config = RetryConfig.custom()
                 .maxAttempts(effectiveMaxRetries)
-                .waitDuration(Duration.ofMillis(waitDurationMs > 0 ? waitDurationMs : DEFAULT_RETRY_WAIT_MS))
+                .waitDuration(Duration.ofMillis(effectiveWaitMs))
                 .retryExceptions(IOException.class, TimeoutException.class)
                 .retryOnException(this::shouldRetry)
                 .build();
@@ -131,7 +137,7 @@ public class PluginResilienceConfig {
             long timeoutSeconds = Math.max(providerTimeoutMs / 1000, 30);
             RateLimiterConfig config = RateLimiterConfig.custom()
                 .limitForPeriod(effectiveLimit)
-                .limitRefreshPeriod(Duration.ofMinutes(1))
+                .limitRefreshPeriod(Duration.ofSeconds(runtimeConfig.getRateLimitRefreshPeriodSeconds()))
                 .timeoutDuration(Duration.ofSeconds(timeoutSeconds))
                 .build();
 

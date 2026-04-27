@@ -35,6 +35,14 @@ public class AiRuntimeConfigService extends RuntimeConfigService {
     public static final String HTTP_MAX_CONNECTIONS_PER_ROUTE = "runtime.ai.http_max_connections_per_route";
     public static final String HTTP_MAX_IN_MEMORY_SIZE_BYTES = "runtime.ai.http_max_in_memory_size_bytes";
 
+    // ---- Resilience (CircuitBreaker / Retry / RateLimiter) ----
+    public static final String CB_SLIDING_WINDOW_SIZE              = "runtime.ai.cb_sliding_window_size";
+    public static final String CB_MINIMUM_CALLS                    = "runtime.ai.cb_minimum_calls";
+    public static final String CB_HALF_OPEN_PERMITTED_CALLS        = "runtime.ai.cb_half_open_permitted_calls";
+    public static final String CB_WAIT_DURATION_OPEN_STATE_SECONDS = "runtime.ai.cb_wait_duration_open_state_seconds";
+    public static final String RETRY_WAIT_DURATION_MS              = "runtime.ai.retry_wait_duration_ms";
+    public static final String RATE_LIMIT_REFRESH_PERIOD_SECONDS   = "runtime.ai.rate_limit_refresh_period_seconds";
+
     public AiRuntimeConfigService(StringRedisTemplate redisTemplate,
                                    RedisMessageListenerContainer listenerContainer) {
         super(redisTemplate, listenerContainer);
@@ -64,6 +72,14 @@ public class AiRuntimeConfigService extends RuntimeConfigService {
         defaults.put(HTTP_MAX_CONNECTIONS_PER_ROUTE, "50");
         // 32MB 响应缓冲：平衡 OOM 防护（10 并发 × 32MB = 320MB）与大图兼容性（支持 4K Base64）
         defaults.put(HTTP_MAX_IN_MEMORY_SIZE_BYTES, String.valueOf(32 * 1024 * 1024));
+
+        // Resilience 默认值（与 PluginResilienceConfig 历史硬编码值保持一致，便于无感切换）
+        defaults.put(CB_SLIDING_WINDOW_SIZE, "10");
+        defaults.put(CB_MINIMUM_CALLS, "5");
+        defaults.put(CB_HALF_OPEN_PERMITTED_CALLS, "3");
+        defaults.put(CB_WAIT_DURATION_OPEN_STATE_SECONDS, "30");
+        defaults.put(RETRY_WAIT_DURATION_MS, "1000");
+        defaults.put(RATE_LIMIT_REFRESH_PERIOD_SECONDS, "60");
     }
 
     // ==================== Named Getters ====================
@@ -122,5 +138,29 @@ public class AiRuntimeConfigService extends RuntimeConfigService {
 
     public int getHttpMaxInMemorySizeBytes() {
         return getInt(HTTP_MAX_IN_MEMORY_SIZE_BYTES);
+    }
+
+    public int getCbSlidingWindowSize() {
+        return getInt(CB_SLIDING_WINDOW_SIZE);
+    }
+
+    public int getCbMinimumCalls() {
+        return getInt(CB_MINIMUM_CALLS);
+    }
+
+    public int getCbHalfOpenPermittedCalls() {
+        return getInt(CB_HALF_OPEN_PERMITTED_CALLS);
+    }
+
+    public int getCbWaitDurationOpenStateSeconds() {
+        return getInt(CB_WAIT_DURATION_OPEN_STATE_SECONDS);
+    }
+
+    public long getRetryWaitDurationMs() {
+        return getLong(RETRY_WAIT_DURATION_MS);
+    }
+
+    public int getRateLimitRefreshPeriodSeconds() {
+        return getInt(RATE_LIMIT_REFRESH_PERIOD_SECONDS);
     }
 }
