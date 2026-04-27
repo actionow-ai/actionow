@@ -12,6 +12,7 @@ import com.actionow.agent.mission.MissionDecisionException;
 import com.actionow.agent.mission.MissionDecisionValidator;
 import com.actionow.agent.mission.MissionPromptBuilder;
 import com.actionow.agent.mission.MissionReducer;
+import com.actionow.agent.mission.MissionStepControlState;
 import com.actionow.agent.core.context.SessionContextHolder;
 import com.actionow.agent.core.scope.AgentContext;
 import com.actionow.agent.core.scope.AgentContextBuilder;
@@ -83,6 +84,7 @@ public class MissionExecutor {
     private final MissionPromptBuilder missionPromptBuilder;
     private final MissionDecisionValidator missionDecisionValidator;
     private final MissionReducer missionReducer;
+    private final MissionStepControlState missionStepControlState;
     private final ToolAccessPolicy toolAccessPolicy;
     private final AgentBillingCalculator billingCalculator;
     private final AgentContextBuilder agentContextBuilder;
@@ -304,9 +306,7 @@ public class MissionExecutor {
             step.setCreditCost(calculateStepCost(transcript));
             if (transcript.getToolCalls() != null) {
                 step.setToolCalls(transcript.getToolCalls().stream()
-                        .map(tc -> Map.<String, Object>of(
-                                "toolName", tc.getToolName(),
-                                "success", tc.isSuccess()))
+                        .map(this::summarizeToolCall)
                         .toList());
                 step.setArtifacts(extractArtifacts(transcript.getToolCalls()));
                 missionExecutionRecordService.recordTrace(
@@ -370,6 +370,8 @@ public class MissionExecutor {
             );
             throw e;
         } finally {
+            // 释放控制工具门控状态，避免 ConcurrentHashMap 长期堆积
+            missionStepControlState.release(step.getId());
             UserContextHolder.clear();
             AgentContextHolder.clearContext();
             String effectiveSessionId = normalizeSessionId(mission.getRuntimeSessionId());
@@ -701,6 +703,44 @@ public class MissionExecutor {
             artifacts.put("toolResults", results);
         }
         return artifacts.isEmpty() ? null : artifacts;
+    }
+
+    /**
+     * 将 {@link AgentResponse.ToolCallInfo} 摘要为持久化到 step.toolCalls 的 Map。
+     *
+     * <p>除 toolName/success 外，额外捕获：
+     * <ul>
+     *   <li>{@code skipped=true}：表明该调用被 {@link com.actionow.agent.mission.ControlToolGuardCallback}
+     *       门控拒绝；同时携带 {@code controlToolFired} 指明本步首个生效的控制工具。</li>
+     *   <li>{@code error}：业务层返回 {@code success=false} 时的错误信息（截断至 300 字符）；
+     *       或工具自身抛错时的字符串化结果。</li>
+     * </ul>
+     * 这些字段供 {@link com.actionow.agent.mission.MissionPromptBuilder} 在下一步 Prompt 中
+     * 显式回显失败 / 被拒原因，让 LLM 不再重复同一错误决策。
+     */
+    private Map<String, Object> summarizeToolCall(AgentResponse.ToolCallInfo tc) {
+        Map<String, Object> entry = new java.util.LinkedHashMap<>();
+        entry.put("toolName", tc.getToolName());
+        entry.put("success", tc.isSuccess());
+
+        Object result = tc.getResult();
+        if (result instanceof Map<?, ?> map) {
+            if (Boolean.TRUE.equals(map.get("skipped"))) {
+                entry.put("skipped", true);
+                Object firedTool = map.get("controlToolFired");
+                if (firedTool != null) {
+                    entry.put("controlToolFired", firedTool.toString());
+                }
+            }
+            Object successFlag = map.get("success");
+            Object errObj = map.get("error");
+            if (Boolean.FALSE.equals(successFlag) && errObj != null) {
+                entry.put("error", truncate(errObj.toString(), 300));
+            }
+        } else if (!tc.isSuccess() && result != null) {
+            entry.put("error", truncate(result.toString(), 300));
+        }
+        return entry;
     }
 
     private String truncate(String text, int maxLength) {

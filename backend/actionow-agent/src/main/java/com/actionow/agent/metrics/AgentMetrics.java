@@ -52,6 +52,11 @@ public class AgentMetrics {
     private final Timer askUserRoundTripTimer;
     private final Counter structuredDataCounter;
 
+    // ==================== Mission ====================
+
+    private final Counter missionControlToolRejectedCounter;
+    private final Counter missionReconcilerRecoveredCounter;
+
     // ==================== Message segment / collapse / placeholder ====================
 
     private final Counter segmentWrittenCounter;
@@ -134,6 +139,17 @@ public class AgentMetrics {
                 .register(registry);
         this.structuredDataCounter = Counter.builder("actionow.agent.structured_data.total")
                 .description("Structured data events emitted to SSE")
+                .register(registry);
+
+        // Mission - 控制工具门控（Phase 1 加的 ControlToolGuardCallback 拒绝事件）
+        // tag.tool 标识被拒绝的控制工具名；异常基数受 CONTROL_TOOL_NAMES 限制（仅 5 个），不会爆炸
+        this.missionControlToolRejectedCounter = Counter.builder("actionow.agent.mission.control_tool.rejected.total")
+                .description("Mission step 内重复调用控制工具被 ControlToolGuardCallback 拒绝的次数")
+                .register(registry);
+
+        // 兜底：BatchJob 终态通知漏发 → MissionReconciler 补发命中。常态应为 0，>0 表示主通道有失败。
+        this.missionReconcilerRecoveredCounter = Counter.builder("actionow.agent.mission.reconciler.recovered.total")
+                .description("MissionReconciler 检测到孤儿 BatchJob 并补发通知的次数（常态应为 0）")
                 .register(registry);
 
         // Message segment / collapse / placeholder
@@ -272,6 +288,24 @@ public class AgentMetrics {
         } else {
             placeholderFinalizedNonEmptyCounter.increment();
         }
+    }
+
+    // ==================== Mission ====================
+
+    /**
+     * 记录一次 mission step 内的控制工具被门控拒绝。
+     * 触发自 {@link com.actionow.agent.mission.ControlToolGuardCallback}：单步只能有一个控制工具决策。
+     */
+    public void recordMissionControlToolRejected() {
+        missionControlToolRejectedCounter.increment();
+    }
+
+    /**
+     * MissionReconciler 检测到「BatchJob 终态 + mission_task PENDING」孤儿并补发通知。
+     * 常态应为 0；持续 &gt;0 说明 BatchJob → Mission 的主通道（MQ）有问题，需排查。
+     */
+    public void recordMissionReconcilerRecovered() {
+        missionReconcilerRecoveredCounter.increment();
     }
 
     /**

@@ -78,6 +78,9 @@ public class MissionPromptBuilder {
                     .append(summary)
                     .append("\n");
 
+            // 追加失败 / 被门控拒绝的工具调用，让 LLM 看到错误上下文，避免重复同样的决策
+            appendToolFailures(sb, prevStep.getToolCalls());
+
             // 追加结构化 artifacts（如有），供后续步骤精确引用
             Map<String, Object> artifacts = prevStep.getArtifacts();
             if (artifacts != null && !artifacts.isEmpty()) {
@@ -86,6 +89,44 @@ public class MissionPromptBuilder {
                 } catch (JsonProcessingException ignored) {
                     // 序列化失败时跳过 artifacts，不影响主流程
                 }
+            }
+        }
+    }
+
+    /**
+     * 渲染上一步的失败 / 被门控拒绝工具调用，最多 5 条。
+     * 与 toolCalls 字段定义对齐（参见 MissionExecutor#summarizeToolCall）：
+     * 含 skipped=true 表示控制工具门控拒绝；含 error 表示业务返回 success=false 的错误信息。
+     */
+    private void appendToolFailures(StringBuilder sb, List<Map<String, Object>> toolCalls) {
+        if (toolCalls == null || toolCalls.isEmpty()) {
+            return;
+        }
+        int rendered = 0;
+        for (Map<String, Object> tc : toolCalls) {
+            boolean skipped = Boolean.TRUE.equals(tc.get("skipped"));
+            String error = tc.get("error") != null ? tc.get("error").toString() : null;
+            boolean success = !Boolean.FALSE.equals(tc.get("success"));
+            if (!skipped && error == null && success) {
+                continue;
+            }
+            if (rendered == 0) {
+                sb.append("    工具异常:\n");
+            }
+            String name = String.valueOf(tc.getOrDefault("toolName", "unknown"));
+            if (skipped) {
+                Object fired = tc.get("controlToolFired");
+                sb.append("      · ").append(name).append(" 被门控拒绝（本步已先触发 ")
+                        .append(fired != null ? fired : "其它控制工具")
+                        .append("，单步只允许一个控制工具）\n");
+            } else if (error != null) {
+                sb.append("      · ").append(name).append(" 失败: ").append(error).append("\n");
+            } else {
+                sb.append("      · ").append(name).append(" 失败（无错误明细）\n");
+            }
+            if (++rendered >= 5) {
+                sb.append("      · ... 更多失败已省略\n");
+                break;
             }
         }
     }

@@ -16,6 +16,8 @@ import com.actionow.agent.registry.DatabaseSkillRegistry;
 import com.actionow.agent.resolution.dto.ResolvedAgentProfile;
 import com.actionow.agent.resolution.service.AgentResolutionService;
 import com.actionow.agent.interaction.AgentStreamBridge;
+import com.actionow.agent.mission.ControlToolGuardCallback;
+import com.actionow.agent.mission.MissionStepControlState;
 import com.actionow.agent.saa.hook.FilteredSkillRegistryAdapter;
 import com.actionow.agent.saa.hook.SelfDialogueGuardHook;
 import com.actionow.agent.saa.hook.StatusEmittingHook;
@@ -71,6 +73,8 @@ public class SaaAgentFactory {
     private final AgentSkillMapper skillMapper;
     private final AgentResolutionService agentResolutionService;
     private final AgentStreamBridge streamBridge;
+    private final MissionStepControlState missionStepControlState;
+    private final com.actionow.agent.metrics.AgentMetrics agentMetrics;
 
     private final AtomicLong lastBuildTime = new AtomicLong(0);
 
@@ -302,7 +306,7 @@ public class SaaAgentFactory {
                 toolRegistry.getProjectToolCallback(toolId).ifPresentOrElse(callback -> {
                     String callbackName = callback.getToolDefinition().name();
                     if (seenToolNames.add(callbackName)) {
-                        callbacks.add(callback);
+                        callbacks.add(wrapIfControlTool(callback));
                         log.debug("Skill {} 注册工具: {} ({})",
                                 skill.getName(), toolId, callbackName);
                     }
@@ -359,7 +363,7 @@ public class SaaAgentFactory {
                 toolRegistry.getProjectToolCallback(toolId).ifPresentOrElse(callback -> {
                     String callbackName = callback.getToolDefinition().name();
                     if (seenToolNames.add(callbackName)) {
-                        callbacks.add(callback);
+                        callbacks.add(wrapIfControlTool(callback));
                     }
                 }, () -> log.warn("Skill {} 的 toolId={} 未找到注册的工具回调", skill.getName(), toolId));
             }
@@ -498,6 +502,20 @@ public class SaaAgentFactory {
         }
     }
 
+    /**
+     * 控制工具（complete_mission / fail_mission / delegate_*）按 Mission Step 维度门控，
+     * 避免单步内 LLM 反复 emit 同名决策工具导致 BatchJob / Mission 状态机被重复推进。
+     * 非控制工具原样返回。
+     */
+    private ToolCallback wrapIfControlTool(ToolCallback callback) {
+        if (callback == null) return null;
+        String name = callback.getToolDefinition().name();
+        if (ControlToolGuardCallback.CONTROL_TOOL_NAMES.contains(name)) {
+            return new ControlToolGuardCallback(callback, missionStepControlState, agentMetrics);
+        }
+        return callback;
+    }
+
     private ToolCallback[] mergeStaticTools(ToolCallback[] universalTools, List<ToolCallback> directCallbacks) {
         List<ToolCallback> merged = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
@@ -555,7 +573,7 @@ public class SaaAgentFactory {
                         return;
                     }
                     toolRegistry.getProjectToolCallback(toolId).ifPresentOrElse(
-                            callbacks::add,
+                            callback -> callbacks.add(wrapIfControlTool(callback)),
                             () -> log.warn("buildDirectProjectCallbacks: callback not resolved for toolId={}, callbackName={}", toolId, callbackName)
                     );
                 }, () -> log.debug("buildDirectProjectCallbacks: toolId={} not found in registry", toolId));

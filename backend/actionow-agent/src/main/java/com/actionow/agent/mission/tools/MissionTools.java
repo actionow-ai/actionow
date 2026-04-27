@@ -29,8 +29,12 @@ import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 
@@ -265,6 +269,16 @@ public class MissionTools {
                 batchRequest.put("skipCondition", "ASSET_EXISTS");
             }
 
+            // 幂等键：同一步骤内 LLM 重复调用同 (scope,entity,gen) → 命中已有 BatchJob，避免 N 倍重复执行
+            batchRequest.put("idempotencyKey", computeIdempotencyKey(
+                    "SCOPE",
+                    scopeEntityType,
+                    scopeEntityId,
+                    generationType,
+                    providerId,
+                    scriptId,
+                    skipExisting));
+
             Result<Map<String, Object>> batchResult = taskFeignClient.createBatchJob(workspaceId, userId, batchRequest);
 
             if (batchResult.isSuccess() && batchResult.getData() != null) {
@@ -272,12 +286,11 @@ public class MissionTools {
                 int totalItems = batchResult.getData().get("totalItems") != null
                         ? ((Number) batchResult.getData().get("totalItems")).intValue() : 0;
 
-                // 更新 Mission
-                Map<String, Object> plan = mission.getPlan() != null ? new HashMap<>(mission.getPlan()) : new HashMap<>();
-                plan.put("batchJobId", batchJobId);
-                plan.put("scopeEntityType", scopeEntityType);
-                plan.put("scopeEntityId", scopeEntityId);
-                mission.setPlan(plan);
+                // 更新 Mission（追加到 plan.batchJobIds 列表，保留 plan.batchJobId 为最近值）
+                Map<String, Object> scopeExtras = new HashMap<>();
+                scopeExtras.put("scopeEntityType", scopeEntityType);
+                scopeExtras.put("scopeEntityId", scopeEntityId);
+                recordBatchJobInPlan(mission, batchJobId, scopeExtras);
                 missionService.save(mission);
                 missionExecutionRecordService.registerTask(
                         missionId,
@@ -412,6 +425,12 @@ public class MissionTools {
             batchRequest.put("errorStrategy", "CONTINUE");
             batchRequest.put("items", items);
 
+            // 幂等键：基于 items 内容签名（entityType+entityId+generationType+providerId 组合排序后哈希）
+            // LLM 单步内重复调用相同请求 → 同 key → 复用已有 BatchJob
+            batchRequest.put("idempotencyKey", computeIdempotencyKey(
+                    "SIMPLE",
+                    itemsSignature(items)));
+
             // 一次调用创建 BatchJob
             Result<Map<String, Object>> batchResult = taskFeignClient.createBatchJob(workspaceId, userId, batchRequest);
 
@@ -420,10 +439,8 @@ public class MissionTools {
                 int totalItems = batchResult.getData().get("totalItems") != null
                         ? ((Number) batchResult.getData().get("totalItems")).intValue() : requests.size();
 
-                // 更新 Mission：存 batchJobId（不再存 N 个 taskId）
-                Map<String, Object> plan = mission.getPlan() != null ? new HashMap<>(mission.getPlan()) : new HashMap<>();
-                plan.put("batchJobId", batchJobId);
-                mission.setPlan(plan);
+                // 更新 Mission：追加到 plan.batchJobIds 列表，保留 plan.batchJobId 兼容旧读路径
+                recordBatchJobInPlan(mission, batchJobId, null);
                 missionService.save(mission);
                 missionExecutionRecordService.registerTask(
                         missionId,
@@ -550,6 +567,14 @@ public class MissionTools {
             }
             batchRequest.put("items", items);
 
+            // 幂等键：pipelineTemplate（或 customSteps）+ items 内容签名
+            String stepsSig = customStepsJson != null ? sha256Hex(customStepsJson) : "";
+            batchRequest.put("idempotencyKey", computeIdempotencyKey(
+                    "PIPELINE",
+                    pipelineTemplate,
+                    stepsSig,
+                    itemsSignature(items)));
+
             Result<Map<String, Object>> batchResult = taskFeignClient.createBatchJob(workspaceId, userId, batchRequest);
 
             if (batchResult.isSuccess() && batchResult.getData() != null) {
@@ -557,11 +582,10 @@ public class MissionTools {
                 int totalItems = batchResult.getData().get("totalItems") != null
                         ? ((Number) batchResult.getData().get("totalItems")).intValue() : requests.size();
 
-                // 更新 Mission
-                Map<String, Object> plan = mission.getPlan() != null ? new HashMap<>(mission.getPlan()) : new HashMap<>();
-                plan.put("batchJobId", batchJobId);
-                plan.put("pipelineTemplate", pipelineTemplate);
-                mission.setPlan(plan);
+                // 更新 Mission（追加到 plan.batchJobIds 列表，保留 plan.batchJobId 兼容旧读路径）
+                Map<String, Object> pipelineExtras = new HashMap<>();
+                pipelineExtras.put("pipelineTemplate", pipelineTemplate);
+                recordBatchJobInPlan(mission, batchJobId, pipelineExtras);
                 missionService.save(mission);
                 missionExecutionRecordService.registerTask(
                         missionId,
@@ -738,6 +762,92 @@ public class MissionTools {
     private String currentMissionStepId() {
         AgentContext agentContext = AgentContextHolder.getContext();
         return agentContext != null ? agentContext.getMissionStepId() : null;
+    }
+
+    /**
+     * 生成 BatchJob 幂等键。
+     * 输入应包含 missionId、stepId（让不同步骤可以独立重试）、batchType、以及内容稳定签名。
+     * 用 SHA-256 是为了避免 hashCode 碰撞 + 让长度可预期（VARCHAR(64)）。
+     *
+     * <p>当 stepId 为空时（理论不应发生）退化为 missionId 级别幂等，
+     * 仍可拦下同一步骤内 LLM 重复调用，但跨步骤需要重试时 Mission 必须先把上一步骤标记完成。
+     */
+    private String computeIdempotencyKey(String batchType, String... parts) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("mission=").append(requireMissionId()).append('|')
+          .append("step=").append(currentMissionStepId() != null ? currentMissionStepId() : "_").append('|')
+          .append("type=").append(batchType);
+        for (String part : parts) {
+            sb.append('|').append(part != null ? part : "");
+        }
+        return sha256Hex(sb.toString());
+    }
+
+    private static String sha256Hex(String input) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash);
+        } catch (NoSuchAlgorithmException e) {
+            // SHA-256 是 JVM 强制规范实现，不可能走到这里
+            throw new IllegalStateException("SHA-256 不可用", e);
+        }
+    }
+
+    /**
+     * items 列表稳定签名：仅取 entityType / entityId / generationType / providerId 字段，
+     * 按 (entityType,entityId) 排序后拼接 → 与 LLM 输入顺序无关、与 params 无关（params 中包含模型生成内容，不稳定）。
+     * 这样"用户原始请求 → 5 次复读"会得到相同 key；不同实体集合得到不同 key。
+     */
+    private static String itemsSignature(List<Map<String, Object>> items) {
+        if (items == null || items.isEmpty()) {
+            return "EMPTY";
+        }
+        List<String> normalized = new ArrayList<>(items.size());
+        for (Map<String, Object> it : items) {
+            String et = String.valueOf(it.get("entityType"));
+            String eid = String.valueOf(it.get("entityId"));
+            String gt = String.valueOf(it.get("generationType"));
+            String pid = String.valueOf(it.get("providerId"));
+            normalized.add(et + ":" + eid + ":" + gt + ":" + pid);
+        }
+        normalized.sort(String::compareTo);
+        return sha256Hex(String.join(",", normalized));
+    }
+
+    /**
+     * 把新创建的 BatchJob ID 累计到 mission.plan 中。
+     *
+     * <p>历史实现只写 {@code plan.batchJobId}（标量），后写覆盖前写——多 BatchJob 的
+     * Mission 会丢失早期作业的关联。新模型保留 {@code batchJobId} 为"最近一次"标量
+     * 兼容已有读路径，同时维护 {@code batchJobIds} 列表（去重保序）作为完整历史。
+     *
+     * <p>extras 用于附带各 batchType 特有字段（scopeEntityType 等），调用方按需传入。
+     */
+    @SuppressWarnings("unchecked")
+    private void recordBatchJobInPlan(AgentMission mission, String batchJobId, Map<String, Object> extras) {
+        Map<String, Object> plan = mission.getPlan() != null ? new HashMap<>(mission.getPlan()) : new HashMap<>();
+
+        Object existingIds = plan.get("batchJobIds");
+        List<String> ids;
+        if (existingIds instanceof List<?> list) {
+            ids = new ArrayList<>(list.size() + 1);
+            for (Object o : list) {
+                if (o != null) ids.add(o.toString());
+            }
+        } else {
+            ids = new ArrayList<>();
+        }
+        if (batchJobId != null && !ids.contains(batchJobId)) {
+            ids.add(batchJobId);
+        }
+
+        plan.put("batchJobIds", ids);
+        plan.put("batchJobId", batchJobId); // 最近一次，兼容旧读路径
+        if (extras != null) {
+            plan.putAll(extras);
+        }
+        mission.setPlan(plan);
     }
 
     private Map<String, Object> buildPipelineEventPayload(String batchJobId, String pipelineTemplate, int totalItems) {

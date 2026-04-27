@@ -37,13 +37,8 @@ public class MissionDecisionValidator {
             "delegate_pipeline_generation"
     );
 
-    private static final Set<String> ALL_CONTROL_TOOLS = Set.of(
-            "complete_mission",
-            "fail_mission",
-            "delegate_batch_generation",
-            "delegate_scope_generation",
-            "delegate_pipeline_generation"
-    );
+    /** 与 {@link ControlToolGuardCallback#CONTROL_TOOL_NAMES} 共用单一来源，新增决策类工具时只改一处。 */
+    private static final Set<String> ALL_CONTROL_TOOLS = ControlToolGuardCallback.CONTROL_TOOL_NAMES;
 
     /**
      * 从 Agent 响应中解析决策。
