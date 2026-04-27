@@ -62,6 +62,19 @@ public class BatchJobOrchestrator {
         // 验证
         validateRequest(request);
 
+        // 幂等命中（在校验后、任何昂贵操作之前）：
+        // 同一 mission 内同 idempotencyKey 已存在则直接返回，不重复创建/Scope 展开/积分预冻结。
+        // 防御 LLM 单步内重复调用 delegate_*（典型现象：5 次调用 → 5 个 BatchJob → 25 倍重复执行）。
+        if (StringUtils.hasText(request.getMissionId()) && StringUtils.hasText(request.getIdempotencyKey())) {
+            BatchJob existing = batchJobMapper.selectByMissionAndIdempotencyKey(
+                    request.getMissionId(), request.getIdempotencyKey());
+            if (existing != null) {
+                log.warn("BatchJob 幂等命中，返回已有作业: missionId={}, idempotencyKey={}, existingId={}",
+                        request.getMissionId(), request.getIdempotencyKey(), existing.getId());
+                return BatchJobResponse.fromEntity(existing);
+            }
+        }
+
         // SCOPE 类型先在事务外做 Feign 展开，避免长事务
         List<BatchJobItem> preExpandedItems = null;
         if (TaskConstants.BatchType.SCOPE.equals(request.getBatchType())) {
@@ -72,7 +85,19 @@ public class BatchJobOrchestrator {
             }
         }
 
-        return self.doCreateAndStart(request, workspaceId, userId, preExpandedItems);
+        try {
+            return self.doCreateAndStart(request, workspaceId, userId, preExpandedItems);
+        } catch (org.springframework.dao.DuplicateKeyException e) {
+            // 唯一索引兜底：并发场景下两次预检查都未命中，但插入时被 uk_batch_job_mission_idem 拦下。
+            BatchJob existing = batchJobMapper.selectByMissionAndIdempotencyKey(
+                    request.getMissionId(), request.getIdempotencyKey());
+            if (existing != null) {
+                log.warn("BatchJob 幂等竞态命中（DB 唯一索引兜底）: missionId={}, idempotencyKey={}, existingId={}",
+                        request.getMissionId(), request.getIdempotencyKey(), existing.getId());
+                return BatchJobResponse.fromEntity(existing);
+            }
+            throw e;
+        }
     }
 
     /**
@@ -488,6 +513,10 @@ public class BatchJobOrchestrator {
         job.setMissionId(request.getMissionId());
         job.setSource(StringUtils.hasText(request.getSource())
                 ? request.getSource() : TaskConstants.BatchSource.API);
+        // 幂等键由 Mission 委派工具基于稳定输入哈希生成，仅在 missionId 存在时透传。
+        if (StringUtils.hasText(request.getIdempotencyKey())) {
+            job.setIdempotencyKey(request.getIdempotencyKey());
+        }
         return job;
     }
 

@@ -159,6 +159,13 @@ public class BatchJob extends BaseEntity {
     private String source;
 
     /**
+     * 幂等键（与 missionId 配合）。Mission 委派工具基于稳定输入计算 SHA-256，
+     * 同 mission 内同 key 命中时直接返回已有作业，避免 LLM 单步重复调用造成 N 倍重复执行。
+     */
+    @TableField("idempotency_key")
+    private String idempotencyKey;
+
+    /**
      * 开始时间
      */
     @TableField("started_at")

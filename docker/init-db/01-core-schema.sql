@@ -3936,6 +3936,10 @@ CREATE TABLE IF NOT EXISTS t_batch_job (
     mission_id       UUID,
     source           VARCHAR(30) DEFAULT 'API',
 
+    -- 幂等键: 由调用方（Mission 委派工具）基于稳定输入哈希生成。
+    -- 同一 mission 下同 key 命中即返回已有 BatchJob，防止 LLM 单步内重复调用导致 N 倍重复执行
+    idempotency_key  VARCHAR(64),
+
     -- 时间戳 + 审计
     started_at       TIMESTAMPTZ,
     completed_at     TIMESTAMPTZ,
@@ -3952,10 +3956,15 @@ COMMENT ON TABLE t_batch_job IS '批量作业表';
 COMMENT ON COLUMN t_batch_job.batch_type IS '批量类型: SIMPLE/PIPELINE/VARIATION/SCOPE/AB_TEST';
 COMMENT ON COLUMN t_batch_job.error_strategy IS '错误策略: CONTINUE/STOP/RETRY_THEN_CONTINUE';
 COMMENT ON COLUMN t_batch_job.source IS '来源: API/AGENT/SCHEDULED';
+COMMENT ON COLUMN t_batch_job.idempotency_key IS '幂等键: SHA-256(missionId+stepId+type+...)，相同 key 在 mission 内只创建一次 BatchJob';
 
 CREATE INDEX IF NOT EXISTS idx_batch_job_workspace ON t_batch_job(workspace_id) WHERE deleted = 0;
 CREATE INDEX IF NOT EXISTS idx_batch_job_status ON t_batch_job(status) WHERE deleted = 0;
 CREATE INDEX IF NOT EXISTS idx_batch_job_mission ON t_batch_job(mission_id) WHERE deleted = 0 AND mission_id IS NOT NULL;
+-- 幂等保护：同一 mission 下同 idempotency_key 唯一（含已软删，避免被 deleted 旁路）
+CREATE UNIQUE INDEX IF NOT EXISTS uk_batch_job_mission_idem
+    ON t_batch_job(mission_id, idempotency_key)
+    WHERE mission_id IS NOT NULL AND idempotency_key IS NOT NULL;
 
 -- =====================================================
 -- 批量作业子项表 (t_batch_job_item)

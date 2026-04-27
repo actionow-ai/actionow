@@ -75,6 +75,13 @@ public class CreateBatchJobRequest {
      */
     private String source;
 
+    /**
+     * 幂等键（可选，配合 missionId 生效）。
+     * 当 (missionId, idempotencyKey) 命中已存在的 BatchJob 时，
+     * 直接返回原作业，不再重复创建。由 Mission 委派工具基于稳定输入哈希生成。
+     */
+    private String idempotencyKey;
+
     // ==================== Scope 展开配置 ====================
 
     /**

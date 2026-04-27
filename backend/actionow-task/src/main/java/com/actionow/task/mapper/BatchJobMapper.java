@@ -43,6 +43,21 @@ public interface BatchJobMapper extends BaseMapper<BatchJob> {
     }
 
     /**
+     * 根据 (missionId, idempotencyKey) 查询已存在 BatchJob，用于幂等命中检查。
+     * 含已软删的记录，与 uk_batch_job_mission_idem 唯一索引语义保持一致，
+     * 防止"软删后再创建同 key"绕过幂等保护。
+     */
+    default BatchJob selectByMissionAndIdempotencyKey(String missionId, String idempotencyKey) {
+        if (missionId == null || idempotencyKey == null) {
+            return null;
+        }
+        return selectOne(new LambdaQueryWrapper<BatchJob>()
+                .eq(BatchJob::getMissionId, missionId)
+                .eq(BatchJob::getIdempotencyKey, idempotencyKey)
+                .last("LIMIT 1"));
+    }
+
+    /**
      * 根据状态查询（用于定时扫描）
      */
     default List<BatchJob> selectByStatus(String status, int limit) {
