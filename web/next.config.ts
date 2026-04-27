@@ -5,6 +5,11 @@ const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  compiler: {
+    // prod 构建剥离 console.log/warn/info/debug，保留 console.error 作为兜底错误日志
+    removeConsole:
+      process.env.NODE_ENV === "production" ? { exclude: ["error"] } : false,
+  },
   images: {
     remotePatterns: [
       {

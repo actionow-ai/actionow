@@ -6,6 +6,7 @@
 
 import { api } from "../client";
 import { getAuthToken } from "@/lib/stores/auth-store";
+import { debugLog } from "@/lib/utils/debug-log";
 import type {
   BatchJobResponseDTO,
   BatchJobItemDTO,
@@ -16,6 +17,8 @@ import type {
   BatchJobListParams,
   BatchJobItemListParams,
 } from "../dto/batch-job.dto";
+
+const sseLog = debugLog("sse");
 
 const BATCH_BASE = "/api/tasks/batch-jobs";
 
@@ -164,7 +167,7 @@ export const batchJobService = {
             }
           } catch {
             if (jsonStr.length > 2) {
-              console.warn("[BatchJob SSE] JSON parse failed:", jsonStr.slice(0, 200));
+              sseLog.warn("[BatchJob SSE] JSON parse failed:", jsonStr.slice(0, 200));
             }
           }
         };

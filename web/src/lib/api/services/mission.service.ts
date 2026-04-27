@@ -5,6 +5,7 @@
 
 import { api } from "../client";
 import { getAuthToken } from "@/lib/stores/auth-store";
+import { debugLog } from "@/lib/utils/debug-log";
 import type {
   MissionResponseDTO,
   MissionProgressDTO,
@@ -13,6 +14,8 @@ import type {
   MissionSseEvent,
   MissionListParams,
 } from "../dto/mission.dto";
+
+const sseLog = debugLog("sse");
 
 const MISSION_BASE = "/api/agent/missions";
 
@@ -136,7 +139,7 @@ export const missionService = {
             }
           } catch {
             if (jsonStr.length > 2) {
-              console.warn("[Mission SSE] JSON parse failed:", jsonStr.slice(0, 200));
+              sseLog.warn("[Mission SSE] JSON parse failed:", jsonStr.slice(0, 200));
             }
           }
         };

@@ -43,6 +43,9 @@ import { HEARTBEAT_INTERVAL, MAX_PROCESSED_EVENTS } from "./types";
 import { useAuthStore } from "@/lib/stores/auth-store";
 import { getNotificationStore } from "@/lib/stores/notification-store";
 import { getWalletStore } from "@/lib/stores/wallet-store";
+import { debugLog } from "@/lib/utils/debug-log";
+
+const wsLog = debugLog("ws");
 
 // =============================================================================
 // Constants
@@ -197,7 +200,7 @@ export function WebSocketProvider({
       case "CONNECTED": {
         const data = message.data as ConnectedData;
         setSessionId(data.sessionId);
-        console.log("[WS] Connected, sessionId:", data.sessionId);
+        wsLog.log("[WS] Connected, sessionId:", data.sessionId);
         break;
       }
 
@@ -322,7 +325,7 @@ export function WebSocketProvider({
       try {
         handler(message);
       } catch (e) {
-        console.error("[WS] Handler error:", e);
+        wsLog.error("[WS] Handler error:", e);
       }
     });
   }, []);
@@ -332,7 +335,7 @@ export function WebSocketProvider({
     getSocketUrl,
     {
       onOpen: () => {
-        console.log("[WS] Connection opened:", getSocketUrl());
+        wsLog.log("[WS] Connection opened:", getSocketUrl());
         // Track reconnects (skip the first connect)
         if (hasConnectedOnceRef.current) {
           setReconnectCount((c) => c + 1);
@@ -351,7 +354,7 @@ export function WebSocketProvider({
         }, HEARTBEAT_INTERVAL);
       },
       onClose: (event: CloseEvent) => {
-        console.log("[WS] Connection closed:", {
+        wsLog.log("[WS] Connection closed:", {
           code: event.code,
           reason: event.reason,
           wasClean: event.wasClean,
@@ -372,7 +375,7 @@ export function WebSocketProvider({
       },
       onError: (event: Event) => {
         const socket = event.target as WebSocket | null;
-        console.error("[WS] Connection error:", {
+        wsLog.error("[WS] Connection error:", {
           url: getSocketUrl(),
           readyState: socket?.readyState,
           event,
@@ -383,7 +386,7 @@ export function WebSocketProvider({
           const message: WebSocketMessage = JSON.parse(event.data);
           processMessage(message);
         } catch (e) {
-          console.error("[WS] Failed to parse message:", e);
+          wsLog.error("[WS] Failed to parse message:", e);
         }
       },
       shouldReconnect: () => true,
@@ -417,7 +420,7 @@ export function WebSocketProvider({
       if (readyState === ReadyState.OPEN) {
         sendMessage(JSON.stringify(message));
       } else {
-        console.warn("[WS] Cannot send - not connected, readyState:", readyState);
+        wsLog.warn("[WS] Cannot send - not connected, readyState:", readyState);
       }
     },
     [readyState, sendMessage]
@@ -430,7 +433,7 @@ export function WebSocketProvider({
   const connect = useCallback(() => {
     // react-use-websocket handles connection automatically
     // This is a no-op if already connected
-    console.log("[WS] Manual connect requested");
+    wsLog.log("[WS] Manual connect requested");
   }, []);
 
   const disconnect = useCallback(() => {

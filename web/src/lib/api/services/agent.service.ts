@@ -5,6 +5,7 @@
 
 import { api } from "../client";
 import { getAuthToken } from "@/lib/stores/auth-store";
+import { debugLog } from "@/lib/utils/debug-log";
 import type {
   AgentCatalogItemDTO,
   CreateSessionRequestDTO,
@@ -28,6 +29,8 @@ import type {
   SessionStateResponseDTO,
 } from "../dto/agent.dto";
 import type { AgentToolCatalogDTO } from "../dto/admin.dto";
+
+const sseLog = debugLog("sse");
 
 // v2: gateway path includes /agent sub-path
 const AGENT_BASE = "/api/agent";
@@ -182,7 +185,7 @@ async function drainSseResponse(response: Response, callbacks: StreamCallbacks):
       currentEventId = undefined;
       currentEventType = "";
     } catch {
-      if (jsonStr.length > 2) console.warn("[SSE] JSON parse failed:", jsonStr.slice(0, 200));
+      if (jsonStr.length > 2) sseLog.warn("[SSE] JSON parse failed:", jsonStr.slice(0, 200));
     }
   };
 
