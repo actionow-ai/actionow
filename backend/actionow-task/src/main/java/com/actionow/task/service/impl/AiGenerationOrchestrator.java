@@ -14,9 +14,11 @@ import com.actionow.common.redis.lock.DistributedLockService;
 import com.actionow.task.config.TaskRuntimeConfigService;
 import com.actionow.task.constant.TaskConstants;
 import com.actionow.task.dto.*;
+import com.actionow.task.entity.BatchJobItem;
 import com.actionow.task.entity.Task;
 import com.actionow.task.feign.AiFeignClient;
 import com.actionow.task.feign.AssetFeignClient;
+import com.actionow.task.mapper.BatchJobItemMapper;
 import com.actionow.task.mapper.TaskMapper;
 import com.actionow.task.service.*;
 import lombok.RequiredArgsConstructor;
@@ -63,6 +65,9 @@ public class AiGenerationOrchestrator implements AiGenerationFacade, TaskComplet
     private final GenerationCostService costService;
     private final AssetLifecycleService assetService;
     private final TaskExecutionService executionService;
+    private final ProviderRouter providerRouter;
+    private final BatchJobItemMapper batchJobItemMapper;
+    private final com.actionow.task.metrics.TaskMetrics taskMetrics;
 
     private static final String ENTITY_LOCK_PREFIX = "entity_generation:";
 
@@ -541,6 +546,10 @@ public class AiGenerationOrchestrator implements AiGenerationFacade, TaskComplet
         if (result.isSuccess()) {
             onSuccess(task, result);
         } else {
+            // Phase 3.2: 失败时优先尝试 provider auto-fallback；成功改写并重投则跳过 onFailure
+            if (tryProviderFallback(task, result.getErrorCode(), result.getErrorMessage())) {
+                return;
+            }
             onFailure(task, result.getErrorCode(), result.getErrorMessage(),
                     Map.of("difyError", result.getErrorMessage() != null ? result.getErrorMessage() : ""));
         }
@@ -829,6 +838,123 @@ public class AiGenerationOrchestrator implements AiGenerationFacade, TaskComplet
         } catch (Exception e) {
             log.warn("发送批量作业任务回调失败: taskId={}, batchJobId={}", task.getId(), task.getBatchJobId(), e);
         }
+    }
+
+    /**
+     * Phase 3.2: Provider auto-fallback。
+     * <p>仅当 (1) feature flag 开启 (2) task 绑定到 BatchJobItem (3) 错误是 provider 侧故障
+     * (4) BatchJobItem.retry_count 未超 max_attempts (5) 还有未尝试的下一优先 provider 时触发。
+     * 触发后：在原 Task 上改写 providerId 重新入队，复用原有积分冻结，避免双重计费。
+     *
+     * @return true 表示已成功改写并重投，调用方应跳过 onFailure
+     */
+    private boolean tryProviderFallback(Task task, String errorCode, String errorMessage) {
+        if (!runtimeConfig.isProviderFallbackEnabled()) {
+            return false;
+        }
+        if (!StringUtils.hasText(task.getBatchItemId())) {
+            return false;
+        }
+        if (!isProviderSideError(errorCode, errorMessage)) {
+            return false;
+        }
+
+        // 进入 fallback 评估路径才记 attempt（feature flag/参数错误不计入，避免基线漂移）
+        taskMetrics.recordProviderFallbackAttempt();
+
+        BatchJobItem item = batchJobItemMapper.selectById(task.getBatchItemId());
+        if (item == null) {
+            log.warn("[provider-fallback] BatchJobItem 不存在，回退到 onFailure: taskId={}, batchItemId={}",
+                    task.getId(), task.getBatchItemId());
+            return false;
+        }
+
+        int currentRetry = item.getRetryCount() != null ? item.getRetryCount() : 0;
+        int maxAttempts = runtimeConfig.getProviderFallbackMaxAttempts();
+        if (currentRetry >= maxAttempts) {
+            log.info("[provider-fallback] 已达最大尝试次数，转入正常失败: taskId={}, retryCount={}, max={}",
+                    task.getId(), currentRetry, maxAttempts);
+            taskMetrics.recordProviderFallbackExhausted();
+            return false;
+        }
+
+        Set<String> excluded = new HashSet<>();
+        if (item.getFailedProviderIds() != null) {
+            excluded.addAll(item.getFailedProviderIds());
+        }
+        if (StringUtils.hasText(task.getProviderId())) {
+            excluded.add(task.getProviderId());
+        }
+
+        Optional<AvailableProviderResponse> next = providerRouter.selectFallback(task.getGenerationType(), excluded);
+        if (next.isEmpty()) {
+            log.info("[provider-fallback] 无可用候选 provider: taskId={}, type={}, excluded={}",
+                    task.getId(), task.getGenerationType(), excluded);
+            taskMetrics.recordProviderFallbackExhausted();
+            return false;
+        }
+
+        AvailableProviderResponse fallback = next.get();
+        String oldProviderId = task.getProviderId();
+        try {
+            // 1. 持久化 BatchJobItem 失败记录（追加 failed_provider_ids、retry_count++）
+            int updated = batchJobItemMapper.recordFallbackAttempt(
+                    item.getId(), oldProviderId, truncate(errorMessage, 1900));
+            if (updated == 0) {
+                log.warn("[provider-fallback] BatchJobItem 更新失败，放弃 fallback: itemId={}", item.getId());
+                return false;
+            }
+
+            // 2. 改写 task 状态：providerId 切换、status 回到 PENDING、清错误、重置进度，重投队列
+            task.setProviderId(fallback.getId());
+            task.setStatus(TaskConstants.TaskStatus.PENDING);
+            task.setErrorCode(null);
+            task.setErrorMessage(null);
+            task.setErrorDetail(null);
+            task.setProgress(0);
+            task.setCompletedAt(null);
+            Map<String, Object> input = task.getInputParams() != null
+                    ? new HashMap<>(task.getInputParams()) : new HashMap<>();
+            input.put("providerId", fallback.getId());
+            input.put("providerName", fallback.getName());
+            task.setInputParams(input);
+            taskMapper.updateById(task);
+
+            sendTaskToQueue(task);
+
+            log.warn("[provider-fallback] 已切换 provider 重投: taskId={}, oldProvider={}, newProvider={}, attempt={}/{}",
+                    task.getId(), oldProviderId, fallback.getId(), currentRetry + 1, maxAttempts);
+            taskMetrics.recordProviderFallbackSuccess();
+            return true;
+        } catch (Exception e) {
+            log.error("[provider-fallback] 切换 provider 异常，回退到 onFailure: taskId={}, oldProvider={}, newProvider={}",
+                    task.getId(), oldProviderId, fallback.getId(), e);
+            return false;
+        }
+    }
+
+    /**
+     * 简单分类：errorCode/Message 是否表征 provider 侧故障（应当 fallback），
+     * 而非用户参数错误（应当直接失败）。保守白名单：未知错误也尝试 fallback。
+     * 包级可见 + static 以便单元测试直接覆盖分类规则，避免回归。
+     */
+    static boolean isProviderSideError(String errorCode, String errorMessage) {
+        if (errorCode != null) {
+            String code = errorCode.toUpperCase();
+            // 明确的用户/参数侧错误：不 fallback
+            if (code.startsWith("PARAM") || code.startsWith("VALIDATION")
+                    || code.contains("INSUFFICIENT_CREDIT") || code.contains("UNAUTHORIZED")
+                    || code.contains("FORBIDDEN") || code.contains("NOT_FOUND")) {
+                return false;
+            }
+        }
+        // 其余情况（包含 provider 5xx / 超时 / 熔断 / IO / 未分类错误）都视为可 fallback
+        return true;
+    }
+
+    private static String truncate(String s, int max) {
+        if (s == null) return null;
+        return s.length() <= max ? s : s.substring(0, max);
     }
 
     private Task getTaskOrThrow(String taskId) {

@@ -9,6 +9,7 @@ import lombok.Data;
 
 import java.io.Serializable;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -143,6 +144,24 @@ public class BatchJobItem implements Serializable {
      */
     @TableField("credit_cost")
     private Long creditCost;
+
+    /**
+     * Provider fallback 重试次数（不含 Resilience4j 同 provider 内重试）
+     */
+    @TableField("retry_count")
+    private Integer retryCount;
+
+    /**
+     * 已失败的 provider ID 列表，fallback 时排除
+     */
+    @TableField(value = "failed_provider_ids", typeHandler = JacksonTypeHandler.class)
+    private List<String> failedProviderIds;
+
+    /**
+     * 最近一次失败时间
+     */
+    @TableField("last_error_at")
+    private LocalDateTime lastErrorAt;
 
     @TableField("created_at")
     private LocalDateTime createdAt;

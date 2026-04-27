@@ -82,6 +82,10 @@ public class TaskRuntimeConfigService extends RuntimeConfigService {
     public static final String AI_SERVICE_URL                   = "runtime.task.ai_service_url";
     /** taskExecutorListener 的注册 ID，与 @RabbitListener(id=...) 保持一致 */
     public static final String TASK_EXECUTOR_LISTENER_ID        = "taskExecutorListener";
+    /** 启用 BatchJobItem provider 自动 fallback */
+    public static final String PROVIDER_FALLBACK_ENABLED        = "runtime.task.provider_fallback_enabled";
+    /** 单个 BatchJobItem 最多尝试 fallback 的次数（不含原始 provider） */
+    public static final String PROVIDER_FALLBACK_MAX_ATTEMPTS   = "runtime.task.provider_fallback_max_attempts";
 
     /** 用于运行时调整 consumer 数量 */
     @Autowired
@@ -118,6 +122,9 @@ public class TaskRuntimeConfigService extends RuntimeConfigService {
         defaults.put(WORKSPACE_BATCH_LIMIT, "10");
         defaults.put(FEIGN_CONNECT_TIMEOUT_MS, "10000");
         defaults.put(AI_SERVICE_URL, "http://actionow-ai:8086");
+        // Provider fallback 默认关闭，验证稳定后再开启
+        defaults.put(PROVIDER_FALLBACK_ENABLED, "false");
+        defaults.put(PROVIDER_FALLBACK_MAX_ATTEMPTS, "2");
     }
 
     /**
@@ -224,5 +231,13 @@ public class TaskRuntimeConfigService extends RuntimeConfigService {
 
     public String getAiServiceUrl() {
         return getString(AI_SERVICE_URL);
+    }
+
+    public boolean isProviderFallbackEnabled() {
+        return getBoolean(PROVIDER_FALLBACK_ENABLED);
+    }
+
+    public int getProviderFallbackMaxAttempts() {
+        return getInt(PROVIDER_FALLBACK_MAX_ATTEMPTS);
     }
 }

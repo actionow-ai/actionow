@@ -105,6 +105,23 @@ public interface BatchJobItemMapper extends BaseMapper<BatchJobItem> {
                         @Param("creditCost") Long creditCost);
 
     /**
+     * 记录 provider fallback 失败：追加到 failed_provider_ids，递增 retry_count，更新 last_error_at。
+     * 使用 PostgreSQL JSONB 操作符避免读改写竞态。
+     *
+     * @return 更新行数（应为 1；为 0 表示 itemId 不存在）
+     */
+    @Update("UPDATE t_batch_job_item SET " +
+            "  failed_provider_ids = COALESCE(failed_provider_ids, '[]'::jsonb) || to_jsonb(#{providerId}::text), " +
+            "  retry_count = retry_count + 1, " +
+            "  last_error_at = NOW(), " +
+            "  error_message = #{errorMessage}, " +
+            "  updated_at = NOW() " +
+            "WHERE id = #{itemId}")
+    int recordFallbackAttempt(@Param("itemId") String itemId,
+                              @Param("providerId") String providerId,
+                              @Param("errorMessage") String errorMessage);
+
+    /**
      * 根据 pipeline_step_id 和状态统计子项数
      */
     @Select("SELECT COUNT(*) FROM t_batch_job_item WHERE batch_job_id = #{batchJobId} " +
