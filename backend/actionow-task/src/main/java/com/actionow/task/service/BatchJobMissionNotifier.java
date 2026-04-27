@@ -48,7 +48,10 @@ public class BatchJobMissionNotifier {
                 .senderId(job.getCreatorId())
                 .build();
 
-        messageProducer.sendDirect(MqConstants.BatchJob.ROUTING_COMPLETED, message);
+        // 必须发到 Mission.ROUTING_TASK_CALLBACK：MissionTaskListener 的队列只绑定这个 key。
+        // 历史 bug：曾误用 BatchJob.ROUTING_COMPLETED，没有任何队列绑定该 key，
+        // 导致消息被 exchange 丢弃，Mission 永久 WAITING（事故 mission 019dcfa8-…71a）。
+        messageProducer.sendDirect(MqConstants.Mission.ROUTING_TASK_CALLBACK, message);
         log.info("批量作业终态通知已发送: missionId={}, batchJobId={}, status={}",
                 job.getMissionId(), job.getId(), job.getStatus());
     }
