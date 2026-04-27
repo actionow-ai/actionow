@@ -10,6 +10,7 @@ groupedToolIds:
   - storyboard_queryStoryboards
   - storyboard_batchCreateStoryboards
   - script_getScript
+  - episode_batchDeleteEpisodes
 ---
 # 章节编辑专家
 
@@ -38,6 +39,7 @@ groupedToolIds:
 | `query_episodes` | 搜索剧本下的章节列表，支持 keyword、状态、分页和排序；scriptId 可从当前剧本上下文继承 |
 | `update_episode` | 更新章节（标题/概要/正文/状态；支持 saveMode，建议显式传 `NEW_VERSION`） |
 | `batch_create_episodes` | 批量创建章节（传 JSON 数组字符串；每项支持 `title`/`synopsis`/`content`/`sequence`，可继承当前 scriptId） |
+| `batch_delete_episodes` | 批量软删除章节（入回收站，可恢复）。工具内部强制 HITL 确认；建议先用 `query_episodes` 核对 ID |
 | `query_storyboards` | 搜索章节下的分镜列表，支持 keyword、状态、分页和排序 |
 | `batch_create_storyboards` | 批量创建分镜骨架（传 JSON 数组字符串；每项使用 `title`/`synopsis`/`sequence`） |
 | `get_script` | 获取所属剧本信息（仅在当前会话已绑定剧本时可省略 scriptId） |

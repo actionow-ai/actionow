@@ -417,6 +417,22 @@ public class EntityQueryInternalController {
                 .orElse(Result.fail("素材不存在: " + assetId));
     }
 
+    /**
+     * 软删除素材（入回收站，可还原）
+     * 供 Agent 模块的 batch_delete_assets 工具调用；走 {@link AssetService#delete} 逻辑删除。
+     * 不暴露永久删除 / 清空回收站入口给 Agent，避免 LLM 误删后无法恢复。
+     */
+    @DeleteMapping("/assets/{assetId}")
+    public Result<Void> deleteAsset(
+            @RequestHeader("X-Workspace-Id") String workspaceId,
+            @RequestHeader(value = "X-User-Id", defaultValue = "system") String userId,
+            @PathVariable("assetId") String assetId) {
+
+        log.info("内部接口软删除素材: workspaceId={}, userId={}, assetId={}", workspaceId, userId, assetId);
+        assetService.delete(assetId, userId);
+        return Result.success();
+    }
+
     // ==================== 实体-素材关联查询接口（Agent 模块使用） ====================
 
     /**

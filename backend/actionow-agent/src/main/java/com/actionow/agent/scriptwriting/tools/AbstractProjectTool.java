@@ -3,6 +3,7 @@ package com.actionow.agent.scriptwriting.tools;
 import com.actionow.agent.core.scope.ScopeAccessException;
 import com.actionow.agent.core.scope.ScopeValidator;
 import com.actionow.agent.feign.ProjectFeignClient;
+import com.actionow.agent.interaction.HitlConfirmationHelper;
 import com.actionow.agent.tool.response.ToolResponse;
 import com.actionow.common.core.result.Result;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -10,9 +11,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.lang.Nullable;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
@@ -28,15 +31,26 @@ public abstract class AbstractProjectTool {
 
     protected final ProjectFeignClient projectClient;
     protected final ScopeValidator scopeValidator;
+    /** 仅 batch_delete_* 类工具用到；其他场景注入 null。 */
+    protected final HitlConfirmationHelper hitl;
 
     protected AbstractProjectTool(ProjectFeignClient projectClient, ScopeValidator scopeValidator) {
         this.projectClient = projectClient;
         this.scopeValidator = scopeValidator;
+        this.hitl = null;
     }
 
     protected AbstractProjectTool(ProjectFeignClient projectClient) {
         this.projectClient = projectClient;
         this.scopeValidator = null;
+        this.hitl = null;
+    }
+
+    /** 给需要 batch_delete_* 的子类用的构造器。 */
+    protected AbstractProjectTool(ProjectFeignClient projectClient, HitlConfirmationHelper hitl) {
+        this.projectClient = projectClient;
+        this.scopeValidator = null;
+        this.hitl = hitl;
     }
 
     // ==================== 验证方法 ====================
@@ -282,5 +296,117 @@ public abstract class AbstractProjectTool {
         } catch (Exception e) {
             throw new IllegalArgumentException("JSON 对象解析失败: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * 解析 ID JSON 数组字符串为 {@code List<String>}（去重去空）。
+     * 与 {@link #parseJsonArray} 不同，本方法仅接受字符串数组（如 {@code ["id1","id2"]}），
+     * 用于 batch_delete_* 工具的 ID 列表入参。
+     */
+    protected List<String> parseIdArray(String json) {
+        try {
+            List<String> raw = OBJECT_MAPPER.readValue(json, new TypeReference<List<String>>() {});
+            List<String> out = new ArrayList<>();
+            java.util.Set<String> seen = new java.util.HashSet<>();
+            for (String id : raw) {
+                if (id == null || id.isBlank()) continue;
+                String trimmed = id.trim();
+                if (seen.add(trimmed)) out.add(trimmed);
+            }
+            return out;
+        } catch (Exception e) {
+            throw new IllegalArgumentException("ID 数组解析失败（期望 [\"id1\",\"id2\"]）: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * batch_delete_* 类工具的统一执行模板：参数校验 → 强制 HITL 确认 → 逐项删除 → 标准 ToolResponse。
+     * <p>
+     * 调用前必须在子类构造器里注入 {@link HitlConfirmationHelper}（即用 3 参构造器）。
+     * 用户拒绝 / 超时 / 无活跃会话 → 返回 {@code cancelled=true}，<b>不</b>执行任何删除。
+     *
+     * @param entityName 实体中文名（"角色" / "场景" 等），用于面向用户的确认提示
+     * @param idsJson    工具入参 JSON 字符串数组，如 {@code ["id1","id2"]}
+     * @param deleter    单项删除函数，通常是 Feign 方法引用，如 {@code projectClient::deleteCharacter}
+     */
+    protected Map<String, Object> executeBatchDelete(String entityName, String idsJson,
+                                                     Function<String, Result<Void>> deleter) {
+        Map<String, Object> validationError = validateRequired(idsJson, entityName + "ID列表");
+        if (validationError != null) return validationError;
+        if (hitl == null) {
+            return error("CONFIG_ERROR",
+                    "工具未注入 HitlConfirmationHelper，请检查子类构造器是否使用 3 参重载");
+        }
+        return execute("批量删除" + entityName, () -> {
+            List<String> ids;
+            try {
+                ids = parseIdArray(idsJson);
+            } catch (IllegalArgumentException iae) {
+                return error(iae.getMessage());
+            }
+            if (ids.isEmpty()) return error(entityName + "ID列表不能为空");
+
+            String question = "确认删除 " + ids.size() + " 个" + entityName + "？此操作可在回收站恢复。";
+            HitlConfirmationHelper.ConfirmationResult cr = hitl.confirmDestructiveAction(question, 120);
+            return switch (cr) {
+                case HitlConfirmationHelper.ConfirmationResult.Confirmed c -> performDelete(ids, deleter);
+                case HitlConfirmationHelper.ConfirmationResult.Declined d -> cancelled(d.askId(), d.reason());
+                case HitlConfirmationHelper.ConfirmationResult.TimedOut t -> cancelled(t.askId(), "TIMEOUT");
+                case HitlConfirmationHelper.ConfirmationResult.NoSession n -> error(
+                        "批量删除必须在 chat / mission 上下文内调用（无活跃会话无法弹 HITL）");
+                case HitlConfirmationHelper.ConfirmationResult.Failed f -> error("HITL 确认失败: " + f.error());
+            };
+        });
+    }
+
+    private Map<String, Object> cancelled(String askId, String reason) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("cancelled", true);
+        data.put("reason", reason);
+        if (askId != null) data.put("askId", askId);
+        data.put("deleted", List.of());
+        data.put("failed", List.of());
+        return ToolResponse.success("用户取消批量删除（" + reason + "），未执行任何删除", data).toMap();
+    }
+
+    /**
+     * 批量逐项调用 deleter 执行删除，汇总成功 / 失败列表返回给 LLM。
+     * <p>
+     * 单项失败不抛异常，仅计入 {@code failed:[{id, reason}]}，让 LLM 看到完整结果决定是否重试。
+     * 调用方负责在调用本方法前完成 HITL 确认与参数校验。
+     *
+     * @param ids     待删除 ID 列表（已去重去空）
+     * @param deleter 单项删除函数，返回 Feign {@link Result}
+     * @return 标准 ToolResponse Map，含 {@code deleted}（成功列表）+ {@code failed}（失败明细）
+     */
+    protected Map<String, Object> performDelete(List<String> ids, Function<String, Result<Void>> deleter) {
+        List<String> deleted = new ArrayList<>();
+        List<Map<String, Object>> failed = new ArrayList<>();
+        for (String id : ids) {
+            try {
+                Result<Void> r = deleter.apply(id);
+                if (r != null && r.isSuccess()) {
+                    deleted.add(id);
+                } else {
+                    Map<String, Object> entry = new HashMap<>();
+                    entry.put("id", id);
+                    entry.put("reason", r != null ? r.getMessage() : "Feign 返回 null");
+                    failed.add(entry);
+                }
+            } catch (Exception e) {
+                Map<String, Object> entry = new HashMap<>();
+                entry.put("id", id);
+                entry.put("reason", e.getMessage());
+                failed.add(entry);
+                log.warn("批量删除单项失败: id={}", id, e);
+            }
+        }
+        Map<String, Object> data = new HashMap<>();
+        data.put("deleted", deleted);
+        data.put("failed", failed);
+        data.put("cancelled", false);
+        String msg = "已删除 " + deleted.size() + " / " + ids.size()
+                + (failed.isEmpty() ? "" : "，失败 " + failed.size() + " 项");
+        return ToolResponse.success(msg, data).toMap();
     }
 }

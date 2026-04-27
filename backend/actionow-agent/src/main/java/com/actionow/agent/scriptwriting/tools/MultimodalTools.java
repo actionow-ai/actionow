@@ -8,6 +8,7 @@ import com.actionow.agent.core.agent.AgentStreamEvent;
 import com.actionow.agent.core.scope.AgentContext;
 import com.actionow.agent.core.scope.AgentContextHolder;
 import com.actionow.agent.interaction.AgentStreamBridge;
+import com.actionow.agent.interaction.HitlConfirmationHelper;
 import com.actionow.agent.dto.request.BatchEntityGenerationRequest;
 import com.actionow.agent.dto.request.EntityGenerationRequest;
 import com.actionow.agent.dto.request.RetryGenerationRequest;
@@ -76,6 +77,7 @@ public class MultimodalTools {
     private final SaaChatModelFactory chatModelFactory;
     private final AgentConfigService agentConfigService;
     private final AgentStreamBridge streamBridge;
+    private final HitlConfirmationHelper hitlConfirmationHelper;
 
     @Value("${actionow.agent.vision-llm-provider-id:}")
     private String visionLlmProviderId;
@@ -1234,5 +1236,116 @@ public class MultimodalTools {
         } catch (Exception e) {
             log.debug("emit batch progress failed phase={}: {}", phase, e.getMessage());
         }
+    }
+
+    @Tool(name = "batch_delete_assets", description = "批量软删除素材（删除入回收站，可恢复，仅软删，不暴露永久删除/清空入口）。" +
+            "工具内部强制弹 HITL 确认对话框，用户拒绝/超时则不执行任何删除并返回 cancelled=true。" +
+            "建议先用 query_assets/get_entity_assets 核对待删除 ID。返回 {success, deleted, failed, cancelled}。")
+    @AgentToolSpec(
+            displayName = "批量删除素材",
+            summary = "对一组素材 ID 执行软删除，删除前必须经用户在前端确认。",
+            purpose = "在用户明确请求删除若干素材时使用；底层走逻辑删除，可在回收站恢复。",
+            actionType = ToolActionType.WRITE,
+            tags = {"asset", "batch", "destructive"},
+            usageNotes = {"破坏性操作，工具内部已强制 HITL 确认；不要再额外调用 ask_user_confirm",
+                    "软删除可恢复，永久删除/回收站清空请走运维通道"},
+            errorCases = {"assetIdsJson 解析失败 / 为空时返回错误",
+                    "无活跃会话时返回错误",
+                    "用户拒绝或超时返回 cancelled=true",
+                    "缺少工作空间上下文会返回错误"},
+            exampleInput = "{\"assetIdsJson\":\"[\\\"asset_1\\\",\\\"asset_2\\\"]\"}",
+            exampleOutput = "{\"success\":true,\"deleted\":[\"asset_1\",\"asset_2\"],\"failed\":[],\"cancelled\":false}"
+    )
+    @AgentToolOutput(
+            description = "返回成功/失败/取消的汇总。",
+            example = "{\"success\":true,\"deleted\":[\"asset_1\"],\"failed\":[],\"cancelled\":false}"
+    )
+    public Map<String, Object> batchDeleteAssets(
+            @ToolParam(description = "素材ID JSON 数组，例: [\"asset_1\",\"asset_2\"]") String assetIdsJson) {
+
+        if (assetIdsJson == null || assetIdsJson.isBlank()) {
+            return Map.of("success", false, "error", "素材ID列表不能为空");
+        }
+        UserContext userContext = UserContextHolder.getContext();
+        String workspaceId = userContext != null ? userContext.getWorkspaceId() : null;
+        String userId = userContext != null ? userContext.getUserId() : "system";
+        if (workspaceId == null) {
+            return Map.of("success", false, "error", "缺少工作空间上下文");
+        }
+
+        List<String> ids;
+        try {
+            List<String> raw = OBJECT_MAPPER.readValue(assetIdsJson, new TypeReference<List<String>>() {});
+            ids = new ArrayList<>();
+            java.util.Set<String> seen = new java.util.HashSet<>();
+            for (String id : raw) {
+                if (id == null || id.isBlank()) continue;
+                String trimmed = id.trim();
+                if (seen.add(trimmed)) ids.add(trimmed);
+            }
+        } catch (Exception e) {
+            return Map.of("success", false, "error", "ID 数组解析失败（期望 [\"id1\",\"id2\"]）: " + e.getMessage());
+        }
+        if (ids.isEmpty()) {
+            return Map.of("success", false, "error", "素材ID列表不能为空");
+        }
+
+        String question = "确认删除 " + ids.size() + " 个素材？此操作可在回收站恢复。";
+        HitlConfirmationHelper.ConfirmationResult cr = hitlConfirmationHelper.confirmDestructiveAction(question, 120);
+
+        return switch (cr) {
+            case HitlConfirmationHelper.ConfirmationResult.Confirmed c -> performAssetDelete(ids, workspaceId, userId);
+            case HitlConfirmationHelper.ConfirmationResult.Declined d -> assetCancelled(d.askId(), d.reason());
+            case HitlConfirmationHelper.ConfirmationResult.TimedOut t -> assetCancelled(t.askId(), "TIMEOUT");
+            case HitlConfirmationHelper.ConfirmationResult.NoSession n -> Map.of(
+                    "success", false,
+                    "error", "批量删除必须在 chat / mission 上下文内调用（无活跃会话无法弹 HITL）");
+            case HitlConfirmationHelper.ConfirmationResult.Failed f -> Map.of(
+                    "success", false, "error", "HITL 确认失败: " + f.error());
+        };
+    }
+
+    private Map<String, Object> assetCancelled(String askId, String reason) {
+        Map<String, Object> data = new HashMap<>();
+        data.put("success", true);
+        data.put("cancelled", true);
+        data.put("reason", reason);
+        if (askId != null) data.put("askId", askId);
+        data.put("deleted", List.of());
+        data.put("failed", List.of());
+        data.put("message", "用户取消批量删除（" + reason + "），未执行任何删除");
+        return data;
+    }
+
+    private Map<String, Object> performAssetDelete(List<String> ids, String workspaceId, String userId) {
+        List<String> deleted = new ArrayList<>();
+        List<Map<String, Object>> failed = new ArrayList<>();
+        for (String id : ids) {
+            try {
+                Result<Void> r = assetFeignClient.deleteAsset(workspaceId, userId, id);
+                if (r != null && r.isSuccess()) {
+                    deleted.add(id);
+                } else {
+                    Map<String, Object> entry = new HashMap<>();
+                    entry.put("id", id);
+                    entry.put("reason", r != null ? r.getMessage() : "Feign 返回 null");
+                    failed.add(entry);
+                }
+            } catch (Exception e) {
+                Map<String, Object> entry = new HashMap<>();
+                entry.put("id", id);
+                entry.put("reason", e.getMessage());
+                failed.add(entry);
+                log.warn("批量删除素材单项失败: id={}", id, e);
+            }
+        }
+        Map<String, Object> data = new HashMap<>();
+        data.put("success", true);
+        data.put("deleted", deleted);
+        data.put("failed", failed);
+        data.put("cancelled", false);
+        data.put("message", "已删除 " + deleted.size() + " / " + ids.size()
+                + (failed.isEmpty() ? "" : "，失败 " + failed.size() + " 项"));
+        return data;
     }
 }

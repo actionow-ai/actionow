@@ -23,6 +23,7 @@ groupedToolIds:
   - storyboard_getStoryboard
   - entityquery_getStoryboardWithEntities
   - entityquery_getStoryboardRelations
+  - multimodal_batchDeleteAssets
 ---
 # 多模态生成执行专家
 
@@ -71,6 +72,7 @@ groupedToolIds:
 | `get_entity_assets_by_type` | 按关系类型过滤实体资产（OFFICIAL/DRAFT/REFERENCE） |
 | `query_assets` | 搜索素材（支持 keyword、scriptId、assetType、source、generationStatus、scope、分页） |
 | `update_asset` | 更新素材名称、描述和 extraInfo；extraInfo 为 merge 语义 |
+| `batch_delete_assets` | 批量软删除素材（入回收站，可恢复，仅软删）。工具内部强制 HITL 确认；建议先用 `query_assets` / `get_entity_assets` 核对 ID |
 
 ### 上游实体读取（只读）
 | 工具 | 用途 |

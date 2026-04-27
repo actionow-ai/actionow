@@ -2,6 +2,7 @@ package com.actionow.agent.scriptwriting.tools;
 
 import com.actionow.agent.core.scope.AgentContextHolder;
 import com.actionow.agent.feign.ProjectFeignClient;
+import com.actionow.agent.interaction.HitlConfirmationHelper;
 import com.actionow.agent.tool.annotation.AgentToolOutput;
 import com.actionow.agent.tool.annotation.AgentToolParamSpec;
 import com.actionow.agent.tool.annotation.AgentToolSpec;
@@ -29,8 +30,8 @@ import java.util.Set;
 @Component
 public class SceneTools extends AbstractProjectTool {
 
-    public SceneTools(ProjectFeignClient projectClient) {
-        super(projectClient);
+    public SceneTools(ProjectFeignClient projectClient, HitlConfirmationHelper hitl) {
+        super(projectClient, hitl);
     }
 
     @Tool(name = "get_scene", description = "获取场景详细信息")
@@ -324,5 +325,31 @@ public class SceneTools extends AbstractProjectTool {
             }
             return error("批量创建场景失败: " + result.getMessage());
         });
+    }
+
+    @Tool(name = "batch_delete_scenes", description = "批量软删除场景（删除入回收站，可恢复）。" +
+            "工具内部强制弹 HITL 确认对话框，用户拒绝/超时则不执行任何删除并返回 cancelled=true。" +
+            "建议先用 query_scenes 核对待删除 ID。返回 {success, deleted, failed, cancelled}。")
+    @AgentToolSpec(
+            displayName = "批量删除场景",
+            summary = "对一组场景 ID 执行软删除，删除前必须经用户在前端确认。",
+            purpose = "在用户明确请求删除若干场景时使用；底层走逻辑删除，可恢复。",
+            actionType = ToolActionType.WRITE,
+            tags = {"scene", "batch", "destructive"},
+            usageNotes = {"破坏性操作，工具内部已强制 HITL 确认；不要再额外调用 ask_user_confirm",
+                    "软删除可恢复（deleted=1）"},
+            errorCases = {"sceneIdsJson 解析失败 / 为空时返回错误",
+                    "无活跃会话时返回错误",
+                    "用户拒绝或超时返回 cancelled=true"},
+            exampleInput = "{\"sceneIdsJson\":\"[\\\"sc-1\\\",\\\"sc-2\\\"]\"}",
+            exampleOutput = "{\"success\":true,\"deleted\":[\"sc-1\",\"sc-2\"],\"failed\":[],\"cancelled\":false}"
+    )
+    @AgentToolOutput(
+            description = "返回成功/失败/取消的汇总。",
+            example = "{\"success\":true,\"deleted\":[\"sc-1\"],\"failed\":[],\"cancelled\":false}"
+    )
+    public Map<String, Object> batchDeleteScenes(
+            @ToolParam(description = "场景ID JSON 数组，例: [\"id1\",\"id2\"]") String sceneIdsJson) {
+        return executeBatchDelete("场景", sceneIdsJson, projectClient::deleteScene);
     }
 }

@@ -2,6 +2,7 @@ package com.actionow.agent.scriptwriting.tools;
 
 import com.actionow.agent.core.scope.AgentContextHolder;
 import com.actionow.agent.feign.ProjectFeignClient;
+import com.actionow.agent.interaction.HitlConfirmationHelper;
 import com.actionow.agent.tool.annotation.AgentToolOutput;
 import com.actionow.agent.tool.annotation.AgentToolParamSpec;
 import com.actionow.agent.tool.annotation.AgentToolSpec;
@@ -29,8 +30,8 @@ import java.util.Set;
 @Component
 public class CharacterTools extends AbstractProjectTool {
 
-    public CharacterTools(ProjectFeignClient projectClient) {
-        super(projectClient);
+    public CharacterTools(ProjectFeignClient projectClient, HitlConfirmationHelper hitl) {
+        super(projectClient, hitl);
     }
 
     @Tool(name = "batch_create_characters", description = "批量创建角色（自动跳过已存在的同名角色）。接受JSON数组，每个元素包含: name(必填), description(必填), scriptId(可选), fixedDesc(可选), age(可选), gender(可选:MALE/FEMALE/OTHER), characterType(可选:PROTAGONIST/ANTAGONIST/SUPPORTING/BACKGROUND), appearanceData(可选,含bodyType/height/skinTone/hairColor/hairStyle/eyeColor等)")
@@ -341,5 +342,32 @@ public class CharacterTools extends AbstractProjectTool {
                 return response;
             });
         });
+    }
+
+    @Tool(name = "batch_delete_characters", description = "批量软删除角色（删除入回收站，可恢复）。" +
+            "工具内部强制弹 HITL 确认对话框，用户拒绝/超时则不执行任何删除并返回 cancelled=true。" +
+            "建议先用 query_characters 核对待删除 ID。返回 {success, deleted:[ids], failed:[{id,reason}], cancelled:bool}。")
+    @AgentToolSpec(
+            displayName = "批量删除角色",
+            summary = "对一组角色 ID 执行软删除，删除前必须经用户在前端确认。",
+            purpose = "在用户明确请求删除若干角色时使用；底层走逻辑删除（deleted=1），可恢复。",
+            actionType = ToolActionType.WRITE,
+            tags = {"character", "batch", "destructive"},
+            usageNotes = {"破坏性操作，工具内部已强制 HITL 确认；不要再额外调用 ask_user_confirm",
+                    "软删除可恢复（deleted=1，回收站可还原）",
+                    "若需永久删除请走运维通道，不在 LLM 工具范围内"},
+            errorCases = {"characterIdsJson 解析失败 / 为空时返回错误",
+                    "无活跃会话时返回错误（HITL 必须有 chat/mission 上下文）",
+                    "用户拒绝或超时返回 success=true 且 cancelled=true"},
+            exampleInput = "{\"characterIdsJson\":\"[\\\"id-1\\\",\\\"id-2\\\"]\"}",
+            exampleOutput = "{\"success\":true,\"deleted\":[\"id-1\",\"id-2\"],\"failed\":[],\"cancelled\":false}"
+    )
+    @AgentToolOutput(
+            description = "返回成功/失败/取消的汇总。cancelled=true 时 deleted 为空数组。",
+            example = "{\"success\":true,\"deleted\":[\"id-1\"],\"failed\":[{\"id\":\"id-2\",\"reason\":\"角色不存在\"}],\"cancelled\":false}"
+    )
+    public Map<String, Object> batchDeleteCharacters(
+            @ToolParam(description = "角色ID JSON 数组，例: [\"id1\",\"id2\"]") String characterIdsJson) {
+        return executeBatchDelete("角色", characterIdsJson, projectClient::deleteCharacter);
     }
 }

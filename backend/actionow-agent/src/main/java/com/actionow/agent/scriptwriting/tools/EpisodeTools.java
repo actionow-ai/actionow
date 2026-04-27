@@ -1,6 +1,7 @@
 package com.actionow.agent.scriptwriting.tools;
 
 import com.actionow.agent.feign.ProjectFeignClient;
+import com.actionow.agent.interaction.HitlConfirmationHelper;
 import com.actionow.agent.tool.annotation.AgentToolOutput;
 import com.actionow.agent.tool.annotation.AgentToolParamSpec;
 import com.actionow.agent.tool.annotation.AgentToolSpec;
@@ -25,8 +26,8 @@ import java.util.Map;
 @Component
 public class EpisodeTools extends AbstractProjectTool {
 
-    public EpisodeTools(ProjectFeignClient projectClient) {
-        super(projectClient);
+    public EpisodeTools(ProjectFeignClient projectClient, HitlConfirmationHelper hitl) {
+        super(projectClient, hitl);
     }
 
     @Tool(name = "get_episode", description = "获取剧集详细信息，包括集号、标题、内容、状态等")
@@ -233,5 +234,31 @@ public class EpisodeTools extends AbstractProjectTool {
             }
             return error("批量创建剧集失败: " + result.getMessage());
         });
+    }
+
+    @Tool(name = "batch_delete_episodes", description = "批量软删除剧集（删除入回收站，可恢复）。" +
+            "工具内部强制弹 HITL 确认对话框，用户拒绝/超时则不执行任何删除并返回 cancelled=true。" +
+            "建议先用 query_episodes 核对待删除 ID。返回 {success, deleted, failed, cancelled}。")
+    @AgentToolSpec(
+            displayName = "批量删除剧集",
+            summary = "对一组剧集 ID 执行软删除，删除前必须经用户在前端确认。",
+            purpose = "在用户明确请求删除若干剧集时使用；底层走逻辑删除，可恢复。",
+            actionType = ToolActionType.WRITE,
+            tags = {"episode", "batch", "destructive"},
+            usageNotes = {"破坏性操作，工具内部已强制 HITL 确认；不要再额外调用 ask_user_confirm",
+                    "软删除可恢复（deleted=1）"},
+            errorCases = {"episodeIdsJson 解析失败 / 为空时返回错误",
+                    "无活跃会话时返回错误",
+                    "用户拒绝或超时返回 cancelled=true"},
+            exampleInput = "{\"episodeIdsJson\":\"[\\\"ep-1\\\",\\\"ep-2\\\"]\"}",
+            exampleOutput = "{\"success\":true,\"deleted\":[\"ep-1\",\"ep-2\"],\"failed\":[],\"cancelled\":false}"
+    )
+    @AgentToolOutput(
+            description = "返回成功/失败/取消的汇总。",
+            example = "{\"success\":true,\"deleted\":[\"ep-1\"],\"failed\":[],\"cancelled\":false}"
+    )
+    public Map<String, Object> batchDeleteEpisodes(
+            @ToolParam(description = "剧集ID JSON 数组，例: [\"id1\",\"id2\"]") String episodeIdsJson) {
+        return executeBatchDelete("剧集", episodeIdsJson, projectClient::deleteEpisode);
     }
 }

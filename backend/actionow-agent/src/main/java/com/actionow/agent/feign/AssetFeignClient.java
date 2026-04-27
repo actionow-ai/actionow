@@ -48,6 +48,16 @@ public interface AssetFeignClient {
             @PathVariable("assetId") String assetId);
 
     /**
+     * 软删除素材（入回收站，deleted=1，可恢复）
+     * 不暴露永久删除（{@code /permanent}）和清空回收站（{@code /trash}）入口。
+     */
+    @DeleteMapping("/assets/{assetId}")
+    Result<Void> deleteAsset(
+            @RequestHeader("X-Workspace-Id") String workspaceId,
+            @RequestHeader(value = "X-User-Id", defaultValue = "system") String userId,
+            @PathVariable("assetId") String assetId);
+
+    /**
      * 批量获取素材信息（Canvas 格式，返回 EntityInfoResponse）
      *
      * @param assetIds 素材ID列表

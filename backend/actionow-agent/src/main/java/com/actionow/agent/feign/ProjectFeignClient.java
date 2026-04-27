@@ -61,6 +61,10 @@ public interface ProjectFeignClient {
             @RequestParam(value = "keyword", required = false) String keyword,
             @RequestParam(value = "limit", required = false) Integer limit);
 
+    /** 软删除剧集（deleted=1，可在回收站还原）。 */
+    @DeleteMapping("/episodes/{episodeId}")
+    Result<Void> deleteEpisode(@PathVariable("episodeId") String episodeId);
+
     /**
      * 分页搜索剧集
      */
@@ -91,6 +95,10 @@ public interface ProjectFeignClient {
             @PathVariable("episodeId") String episodeId,
             @RequestParam(value = "keyword", required = false) String keyword,
             @RequestParam(value = "limit", required = false) Integer limit);
+
+    /** 软删除分镜（deleted=1，可在回收站还原）。 */
+    @DeleteMapping("/storyboards/{storyboardId}")
+    Result<Void> deleteStoryboard(@PathVariable("storyboardId") String storyboardId);
 
     /**
      * 分页搜索分镜
@@ -131,6 +139,10 @@ public interface ProjectFeignClient {
             @PathVariable("scriptId") String scriptId,
             @RequestParam(value = "keyword", required = false) String keyword,
             @RequestParam(value = "limit", required = false) Integer limit);
+
+    /** 软删除角色（deleted=1，可在回收站还原）。 */
+    @DeleteMapping("/characters/{characterId}")
+    Result<Void> deleteCharacter(@PathVariable("characterId") String characterId);
 
     /**
      * 分页搜索角色（跨 schema：SYSTEM + WORKSPACE + SCRIPT）
@@ -179,6 +191,10 @@ public interface ProjectFeignClient {
     Result<Map<String, Object>> updateScene(@PathVariable("sceneId") String sceneId,
                                              @RequestBody Map<String, Object> request);
 
+    /** 软删除场景（deleted=1，可在回收站还原）。 */
+    @DeleteMapping("/scenes/{sceneId}")
+    Result<Void> deleteScene(@PathVariable("sceneId") String sceneId);
+
     // ==================== Prop ====================
 
     @PostMapping("/props")
@@ -211,6 +227,10 @@ public interface ProjectFeignClient {
     Result<Map<String, Object>> updateProp(@PathVariable("propId") String propId,
                                             @RequestBody Map<String, Object> request);
 
+    /** 软删除道具（deleted=1，可在回收站还原）。 */
+    @DeleteMapping("/props/{propId}")
+    Result<Void> deleteProp(@PathVariable("propId") String propId);
+
     // ==================== Style ====================
 
     @PostMapping("/styles")
@@ -241,6 +261,10 @@ public interface ProjectFeignClient {
     @PutMapping("/styles/{styleId}")
     Result<Map<String, Object>> updateStyle(@PathVariable("styleId") String styleId,
                                              @RequestBody Map<String, Object> request);
+
+    /** 软删除风格（deleted=1，可在回收站还原）。 */
+    @DeleteMapping("/styles/{styleId}")
+    Result<Void> deleteStyle(@PathVariable("styleId") String styleId);
 
     // ==================== Batch Create ====================
 

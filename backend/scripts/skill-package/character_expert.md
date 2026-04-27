@@ -10,6 +10,7 @@ groupedToolIds:
   - entityrelation_createRelation
   - entityrelation_listRelationsBySource
   - entityrelation_listRelationsByTarget
+  - character_batchDeleteCharacters
 ---
 # 角色设计专家
 
@@ -39,6 +40,7 @@ groupedToolIds:
 | `query_characters` | 搜索角色（支持 keyword、类型、性别、分页和排序；scriptId 可从当前剧本上下文继承） |
 | `get_character` | 获取角色详情（返回完整 character 对象） |
 | `update_character` | 更新角色信息、fixedDesc、外观 patch 和附加信息；支持 saveMode |
+| `batch_delete_characters` | 批量软删除角色（入回收站，可恢复）。工具内部强制 HITL 确认；建议先用 `query_characters` 核对 ID |
 | `create_relation` | 创建角色间关系（底层工具，非幂等） |
 | `list_relations_by_source` | 查看角色发出的所有关系 |
 | `list_relations_by_target` | 查看指向该角色的所有关系 |

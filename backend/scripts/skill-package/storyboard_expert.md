@@ -16,6 +16,7 @@ groupedToolIds:
   - character_queryCharacters
   - scene_queryScenes
   - prop_queryProps
+  - storyboard_batchDeleteStoryboards
 ---
 # 分镜设计专家
 
@@ -45,6 +46,7 @@ groupedToolIds:
 | `query_storyboards` | 搜索分镜列表，支持 keyword、剧本/剧集过滤、状态、分页和排序 |
 | `update_storyboard` | 更新分镜文本、视觉/音频 patch、场景覆盖和实体关系；支持 saveMode |
 | `batch_create_storyboards` | 批量创建分镜骨架或已确定方案的分镜（传 JSON 数组字符串；每项至少含 `episodeId` 和 `synopsis`） |
+| `batch_delete_storyboards` | 批量软删除分镜（入回收站，可恢复）。工具内部强制 HITL 确认；建议先用 `query_storyboards` 核对 ID |
 | `get_storyboard_with_entities` | 一次性获取分镜及其关联角色、场景、道具、对白与实体详情 |
 | `get_storyboard_relations` | 获取分镜关系元数据（位置、动作、表情、交互等） |
 | `add_character_to_storyboard` | 添加角色到分镜（含位置/动作/表情） |

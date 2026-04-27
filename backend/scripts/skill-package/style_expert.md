@@ -8,6 +8,7 @@ groupedToolIds:
   - style_getStyle
   - style_updateStyle
   - style_batchCreateStyles
+  - style_batchDeleteStyles
 ---
 # 视觉风格专家
 
@@ -37,6 +38,7 @@ groupedToolIds:
 | `get_style` | 获取风格详情（返回完整 style 对象，含 fixedDesc 与 styleParams） |
 | `update_style` | 更新风格信息、fixedDesc、styleType 和 styleParams；支持 saveMode |
 | `batch_create_styles` | 批量创建风格（传 JSON 数组字符串；自动跳过同名已存在风格） |
+| `batch_delete_styles` | 批量软删除风格（入回收站，可恢复）。工具内部强制 HITL 确认；建议先用 `list_styles` / `query_styles` 核对 ID |
 
 ## 风格数据模型
 

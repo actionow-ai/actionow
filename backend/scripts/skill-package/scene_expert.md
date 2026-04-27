@@ -7,6 +7,7 @@ groupedToolIds:
   - scene_queryScenes
   - scene_updateScene
   - scene_batchCreateScenes
+  - scene_batchDeleteScenes
 ---
 # 场景设计专家
 
@@ -37,6 +38,7 @@ groupedToolIds:
 | `query_scenes` | 搜索场景（支持 keyword、sceneType、分页和排序；scriptId 可从当前剧本上下文继承） |
 | `update_scene` | 更新场景信息、fixedDesc、外观 patch 和附加信息；支持 saveMode |
 | `batch_create_scenes` | 批量创建场景（传 JSON 数组字符串；自动跳过同名已存在场景） |
+| `batch_delete_scenes` | 批量软删除场景（入回收站，可恢复）。工具内部强制 HITL 确认；建议先用 `query_scenes` 核对 ID |
 
 ## 场景数据模型
 

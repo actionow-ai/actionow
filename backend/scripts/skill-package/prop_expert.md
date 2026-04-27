@@ -7,6 +7,7 @@ groupedToolIds:
   - prop_queryProps
   - prop_updateProp
   - prop_batchCreateProps
+  - prop_batchDeleteProps
 ---
 # 道具设计专家
 
@@ -36,6 +37,7 @@ groupedToolIds:
 | `query_props` | 搜索可用道具（支持 keyword、propType、分页和排序；scriptId 可从当前剧本上下文继承） |
 | `update_prop` | 更新道具信息、fixedDesc、外观 patch 和附加信息；支持 saveMode |
 | `batch_create_props` | 批量创建道具（传 JSON 数组字符串；自动跳过同名已存在道具） |
+| `batch_delete_props` | 批量软删除道具（入回收站，可恢复）。工具内部强制 HITL 确认；建议先用 `query_props` 核对 ID |
 
 ## 道具数据模型
 
