@@ -1,9 +1,11 @@
 import { useTranslations, useLocale } from "next-intl";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Github, Star, Scale, Layers, Server } from "lucide-react";
 import Link from "next/link";
 import NextImage from "next/image";
 import { BackgroundRippleEffect } from "@/components/ui/background-ripple-effect";
 import { Navbar, BrandLogo } from "./landing-navbar";
+
+export const GITHUB_REPO_URL = "https://github.com/actionow-ai/actionow";
 
 const BRAND_IMAGE_BASE = process.env.NEXT_PUBLIC_BRAND_IMAGE_BASE || "https://asset.alienworm.top/brand";
 const AGENT_CARDS = [
@@ -125,6 +127,77 @@ function AgentsSection() {
   );
 }
 
+/* ─── Open Source ─── */
+function OpenSourceSection() {
+  const t = useTranslations("landing.openSource");
+
+  const highlights = [
+    { key: "license", Icon: Scale },
+    { key: "stack", Icon: Layers },
+    { key: "selfHost", Icon: Server },
+  ] as const;
+
+  return (
+    <section
+      id="opensource"
+      className="pointer-events-auto w-full border-y border-foreground/[0.06] bg-surface/30 px-6 py-20 md:px-10 md:py-28"
+    >
+      <div className="mx-auto grid max-w-7xl items-center gap-12 lg:grid-cols-[1.1fr_0.9fr] lg:gap-20">
+        {/* Left: copy + CTAs */}
+        <div>
+          <span className="inline-flex items-center gap-2 rounded-full border border-accent/30 bg-accent/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.25em] text-accent">
+            <Github className="size-3" />
+            {t("badge")}
+          </span>
+          <h2 className="mt-5 text-4xl font-black uppercase italic leading-[0.95] tracking-tight md:text-6xl">
+            {t("title")}
+          </h2>
+          <p className="mt-6 max-w-xl text-base leading-relaxed text-muted md:text-lg">
+            {t("description")}
+          </p>
+          <div className="mt-8 flex flex-wrap gap-3">
+            <a
+              href={GITHUB_REPO_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 rounded-lg bg-foreground px-5 py-3 text-sm font-black uppercase tracking-wider text-background transition-transform hover:scale-[1.02]"
+            >
+              <Github className="size-4" />
+              {t("viewOnGitHub")}
+            </a>
+            <a
+              href={`${GITHUB_REPO_URL}/stargazers`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 rounded-lg border border-foreground/15 bg-surface/40 px-5 py-3 text-sm font-bold uppercase tracking-wider text-foreground backdrop-blur-sm transition-colors hover:border-accent/40 hover:bg-surface/60"
+            >
+              <Star className="size-4" />
+              {t("starUs")}
+            </a>
+          </div>
+        </div>
+
+        {/* Right: highlight chips */}
+        <ul className="flex flex-col gap-3">
+          {highlights.map(({ key, Icon }) => (
+            <li
+              key={key}
+              className="flex items-center gap-4 rounded-lg border border-foreground/10 bg-background/60 px-5 py-4 backdrop-blur-sm"
+            >
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-md bg-accent/15 text-accent">
+                <Icon className="size-5" />
+              </span>
+              <span className="text-sm font-semibold uppercase tracking-wider text-foreground md:text-base">
+                {t(`highlights.${key}`)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </section>
+  );
+}
+
 /* ─── Footer ─── */
 function Footer() {
   const t = useTranslations("landing");
@@ -144,6 +217,15 @@ function Footer() {
         <nav className="flex gap-6 text-[11px] font-semibold uppercase tracking-widest text-muted">
           <a href="#agents" className="transition-colors hover:text-foreground">
             {t("nav.features")}
+          </a>
+          <a
+            href={GITHUB_REPO_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 transition-colors hover:text-foreground"
+          >
+            <Github className="size-3.5" />
+            {t("footer.github")}
           </a>
         </nav>
 
@@ -186,6 +268,7 @@ export function LandingPage() {
             <MarqueeBanner />
           </div>
           <AgentsSection />
+          <OpenSourceSection />
         </main>
 
         <Footer />

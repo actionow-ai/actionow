@@ -8,7 +8,9 @@ const jsonLd = {
   operatingSystem: "Web",
   url: "https://actionow.ai",
   description:
-    "AI-powered video creation platform. Automate scriptwriting, storyboarding, and production with intelligent AI agents.",
+    "Open-source AI-powered video creation platform. Automate scriptwriting, storyboarding, and production with intelligent multi-agent collaboration.",
+  sameAs: ["https://github.com/actionow-ai/actionow"],
+  license: "https://www.apache.org/licenses/LICENSE-2.0",
   offers: {
     "@type": "Offer",
     price: "0",

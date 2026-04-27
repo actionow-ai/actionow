@@ -5,7 +5,8 @@
       "scenarios": "Scenarios",
       "workflow": "Workflow",
       "login": "Login",
-      "getStarted": "Get Started"
+      "getStarted": "Get Started",
+      "github": "GitHub"
     },
     "hero": {
       "titleLine1": "Multi-Agent",
@@ -46,7 +47,20 @@
       "copyright": "ActioNow",
       "contactLabel": "Contact Us",
       "rights": "© 2025 ActioNow Studio. All rights reserved.",
-      "tagline": "AI-Powered Video Creation Platform"
+      "tagline": "AI-Powered Video Creation Platform",
+      "github": "Source"
+    },
+    "openSource": {
+      "badge": "100% Open Source",
+      "title": "Open code. Open collaboration.",
+      "description": "ActioNow is an open-source multi-agent creative platform. From backend orchestration to the frontend studio, every line lives on GitHub. We believe open collaboration takes AI creation tools further.",
+      "viewOnGitHub": "View on GitHub",
+      "starUs": "Star the repo",
+      "highlights": {
+        "license": "Apache 2.0 License",
+        "stack": "Spring Boot · Next.js · React 19",
+        "selfHost": "Self-host ready"
+      }
     }
   },
   "common": {

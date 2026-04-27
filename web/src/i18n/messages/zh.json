@@ -5,7 +5,8 @@
       "scenarios": "创作场景",
       "workflow": "工作流程",
       "login": "登录",
-      "getStarted": "开始创作"
+      "getStarted": "开始创作",
+      "github": "GitHub"
     },
     "hero": {
       "titleLine1": "Multi-Agent",
@@ -46,7 +47,20 @@
       "copyright": "ActioNow",
       "contactLabel": "联系我们",
       "rights": "© 2025 ActioNow Studio. All rights reserved.",
-      "tagline": "AI 驱动的影视创作平台"
+      "tagline": "AI 驱动的影视创作平台",
+      "github": "源码"
+    },
+    "openSource": {
+      "badge": "100% 开源",
+      "title": "代码全开放，欢迎贡献",
+      "description": "ActioNow 是一个开源的多 Agent 协同创作平台。从后端编排到前端工坊，全部代码托管在 GitHub。我们相信开放协作能让 AI 创作工具走得更远。",
+      "viewOnGitHub": "在 GitHub 查看",
+      "starUs": "Star 项目",
+      "highlights": {
+        "license": "Apache 2.0 协议",
+        "stack": "Spring Boot · Next.js · React 19",
+        "selfHost": "支持私有化部署"
+      }
     }
   },
   "common": {

@@ -5,9 +5,11 @@ import { useTranslations, useLocale } from "next-intl";
 import Link from "next/link";
 import NextImage from "next/image";
 import { Button } from "@heroui/react";
-import { Sun, Moon } from "lucide-react";
+import { Sun, Moon, Github } from "lucide-react";
 import { LanguageSwitcher } from "@/components/ui/language-switcher";
 import { useTheme } from "@/components/providers/theme-provider";
+
+const GITHUB_REPO_URL = "https://github.com/actionow-ai/actionow";
 
 const emptySubscribe = () => () => {};
 function useMounted() {
@@ -75,8 +77,23 @@ export function Navbar() {
           >
             {t("features")}
           </a>
+          <a
+            href="#opensource"
+            className="transition-colors hover:text-foreground"
+          >
+            {t("github")}
+          </a>
         </nav>
         <div className="flex items-center gap-3">
+          <a
+            href={GITHUB_REPO_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="GitHub repository"
+            className="hidden size-9 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface/60 hover:text-foreground sm:inline-flex"
+          >
+            <Github className="size-4" />
+          </a>
           <LanguageSwitcher />
           <ThemeToggle />
           <Link
