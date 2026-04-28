@@ -182,6 +182,11 @@ public class UpdateModelProviderRequest {
     private Boolean enabled;
 
     /**
+     * 可见性: PUBLIC / INTERNAL / WHITELIST
+     */
+    private String visibility;
+
+    /**
      * 自定义请求头
      */
     private Map<String, String> customHeaders;

@@ -6,7 +6,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useLocale } from "next-intl";
 import { Button } from "@heroui/react";
-import { ArrowLeft, Bot, Brain, Code2, Cpu, Gift, /* GitBranch, */ PanelLeft, PanelLeftClose, Settings2, ShieldCheck, Sliders, Wrench } from "lucide-react";
+import { ArrowLeft, Bot, Brain, Building2, Code2, Cpu, Gift, /* GitBranch, */ PanelLeft, PanelLeftClose, Settings2, ShieldCheck, Sliders, Wrench } from "lucide-react";
 import { LOCALES } from "@/i18n/config";
 
 type MenuItem = {
@@ -108,6 +108,13 @@ export function AdminSidebar() {
     {
       title: "系统",
       items: [
+        {
+          key: "workspaces",
+          label: "Workspace管理",
+          icon: Building2,
+          href: `/${locale}/admin/workspaces`,
+          matchPath: "/admin/workspaces",
+        },
         {
           key: "systemConfigs",
           label: "系统配置",

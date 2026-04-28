@@ -34,4 +34,13 @@ public interface WorkspaceInternalClient {
      */
     @GetMapping("/internal/workspace/{workspaceId}/schema")
     Result<String> getTenantSchema(@PathVariable("workspaceId") String workspaceId);
+
+    /**
+     * 查询工作空间是否为内部测试 workspace
+     *
+     * @param workspaceId 工作空间ID
+     * @return true=内部测试 workspace
+     */
+    @GetMapping("/internal/workspace/{workspaceId}/is-internal")
+    Result<Boolean> isInternal(@PathVariable("workspaceId") String workspaceId);
 }

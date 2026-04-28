@@ -176,6 +176,11 @@ public class ModelProviderResponse {
     private Boolean enabled;
 
     /**
+     * 可见性: PUBLIC / INTERNAL / WHITELIST
+     */
+    private String visibility;
+
+    /**
      * 自定义请求头
      */
     private Map<String, String> customHeaders;
@@ -272,6 +277,7 @@ public class ModelProviderResponse {
             .iconUrl(entity.getIconUrl())
             .priority(entity.getPriority())
             .enabled(entity.getEnabled())
+            .visibility(entity.getVisibility())
             .customHeaders(entity.getCustomHeaders())
             // 同步状态
             .lastSyncedAt(entity.getLastSyncedAt())

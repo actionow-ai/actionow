@@ -78,4 +78,18 @@ public class JdbcWorkspaceInternalClient implements WorkspaceInternalClient {
 
         return Result.success((String) rows.getFirst().get("schema_name"));
     }
+
+    @Override
+    public Result<Boolean> isInternal(String workspaceId) {
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT is_internal FROM public.t_workspace WHERE id = ? AND deleted = 0",
+                workspaceId);
+
+        if (rows.isEmpty()) {
+            return Result.success(Boolean.FALSE);
+        }
+
+        Object value = rows.getFirst().get("is_internal");
+        return Result.success(Boolean.TRUE.equals(value));
+    }
 }

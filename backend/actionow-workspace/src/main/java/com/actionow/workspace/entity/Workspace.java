@@ -78,6 +78,12 @@ public class Workspace extends BaseEntity {
     private Integer memberCount;
 
     /**
+     * 是否为内部测试 workspace（用于看到 visibility=INTERNAL 的 provider）
+     */
+    @TableField("is_internal")
+    private Boolean isInternal;
+
+    /**
      * 空间级配置（JSONB）
      * 包含: features, defaults, limits, branding
      */

@@ -51,6 +51,7 @@ export interface ModelProviderDTO {
   maxRetries?: number;
   rateLimit?: number;
   enabled?: boolean;
+  visibility?: ProviderVisibility;
   supportsStreaming?: boolean;
   supportsBlocking?: boolean;
   supportsCallback?: boolean;
@@ -62,6 +63,16 @@ export interface ModelProviderDTO {
   exclusiveGroups?: unknown[];
   createdAt?: string;
   updatedAt?: string;
+}
+
+export type ProviderVisibility = "PUBLIC" | "INTERNAL" | "WHITELIST";
+
+export interface ProviderWhitelistEntryDTO {
+  id: string;
+  providerId: string;
+  workspaceId: string;
+  note?: string | null;
+  createdAt?: string;
 }
 
 export interface SaveModelProviderRequestDTO {
@@ -100,6 +111,7 @@ export interface SaveModelProviderRequestDTO {
   rateLimit?: number;
   customHeaders?: Record<string, string>;
   enabled?: boolean;
+  visibility?: ProviderVisibility;
   // Response modes
   supportsStreaming?: boolean;
   supportsBlocking?: boolean;

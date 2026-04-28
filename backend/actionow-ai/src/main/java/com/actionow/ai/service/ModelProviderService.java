@@ -82,6 +82,20 @@ public interface ModelProviderService {
     List<ModelProvider> findEnabledByType(String providerType);
 
     /**
+     * 按可见性过滤后的启用 provider 列表（按 workspace）
+     *
+     * 可见性规则：
+     *   PUBLIC    → 所有 workspace 可见
+     *   INTERNAL  → 仅 workspace.is_internal=true 可见
+     *   WHITELIST → 仅在 t_provider_workspace_whitelist 中的 workspace 可见
+     *
+     * @param providerType 提供商类型
+     * @param workspaceId  当前 workspace ID（null/空 时仅返回 PUBLIC）
+     * @return 该 workspace 可见的 provider 列表
+     */
+    List<ModelProvider> findVisibleEnabledByType(String providerType, String workspaceId);
+
+    /**
      * 根据插件ID查询
      *
      * @param pluginId 插件ID

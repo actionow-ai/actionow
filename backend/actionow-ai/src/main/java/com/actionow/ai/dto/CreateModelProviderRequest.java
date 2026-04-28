@@ -205,6 +205,11 @@ public class CreateModelProviderRequest {
     private Boolean enabled = true;
 
     /**
+     * 可见性: PUBLIC(默认) / INTERNAL / WHITELIST
+     */
+    private String visibility = "PUBLIC";
+
+    /**
      * 自定义请求头
      */
     private Map<String, String> customHeaders;

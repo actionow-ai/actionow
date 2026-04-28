@@ -389,7 +389,9 @@ public class AiInternalController {
     @GetMapping("/provider/available")
     public Result<List<AvailableProviderResponse>> getAvailableProviders(
             @RequestParam("providerType") String providerType) {
-        List<ModelProvider> providers = modelProviderService.findEnabledByType(providerType);
+        // workspaceId 由 UserContextFilter 从 internal JWT claims 解出后写入 ThreadLocal
+        String workspaceId = UserContextHolder.getWorkspaceId();
+        List<ModelProvider> providers = modelProviderService.findVisibleEnabledByType(providerType, workspaceId);
         List<AvailableProviderResponse> responses = providers.stream()
                 .map(this::convertToAvailableProvider)
                 .collect(Collectors.toList());

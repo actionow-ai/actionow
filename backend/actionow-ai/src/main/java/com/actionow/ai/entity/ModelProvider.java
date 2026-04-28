@@ -154,6 +154,11 @@ public class ModelProvider extends BaseEntity {
     private Boolean enabled;
 
     /**
+     * 可见性: PUBLIC=所有workspace可见, INTERNAL=仅 is_internal=true 的 workspace 可见, WHITELIST=按白名单
+     */
+    private String visibility;
+
+    /**
      * 自定义请求头
      */
     @TableField(typeHandler = JacksonTypeHandler.class)

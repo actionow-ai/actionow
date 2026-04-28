@@ -1,14 +1,17 @@
 package com.actionow.ai.controller;
 
+import com.actionow.ai.dto.AddProviderWhitelistRequest;
 import com.actionow.ai.dto.CopyModelProviderRequest;
 import com.actionow.ai.dto.CreateModelProviderRequest;
 import com.actionow.ai.dto.ModelProviderResponse;
+import com.actionow.ai.dto.ProviderWhitelistResponse;
 import com.actionow.ai.dto.SchemaValidationResponse;
 import com.actionow.ai.dto.TestExecutionRequest;
 import com.actionow.ai.dto.UpdateModelProviderRequest;
 import com.actionow.ai.dto.UpdateSchemaRequest;
 import com.actionow.ai.entity.ModelProvider;
 import com.actionow.ai.service.ModelProviderService;
+import com.actionow.ai.service.ProviderWhitelistService;
 import com.actionow.ai.service.schema.InputSchemaService;
 import com.actionow.ai.service.schema.SchemaValidator;
 import com.actionow.common.core.result.PageResult;
@@ -42,6 +45,7 @@ public class ModelProviderController {
     private final ModelProviderService providerService;
     private final InputSchemaService inputSchemaService;
     private final ObjectMapper objectMapper;
+    private final ProviderWhitelistService whitelistService;
 
     /**
      * 创建提供商
@@ -157,6 +161,41 @@ public class ModelProviderController {
     public Result<Void> disable(@PathVariable String id) {
         providerService.disable(id);
         return Result.success();
+    }
+
+    // ========== 灰度白名单管理 ==========
+
+    /**
+     * 添加 workspace 到 provider 白名单（visibility=WHITELIST 时生效）
+     */
+    @Operation(summary = "添加 provider 白名单")
+    @PostMapping("/{id}/whitelist")
+    public Result<ProviderWhitelistResponse> addWhitelist(@PathVariable("id") String providerId,
+                                                          @Valid @RequestBody AddProviderWhitelistRequest request) {
+        return Result.success(ProviderWhitelistResponse.fromEntity(
+                whitelistService.add(providerId, request.getWorkspaceId(), request.getNote())));
+    }
+
+    /**
+     * 从白名单移除某 workspace
+     */
+    @Operation(summary = "移除 provider 白名单")
+    @DeleteMapping("/{id}/whitelist/{workspaceId}")
+    public Result<Void> removeWhitelist(@PathVariable("id") String providerId,
+                                        @PathVariable("workspaceId") String workspaceId) {
+        whitelistService.remove(providerId, workspaceId);
+        return Result.success();
+    }
+
+    /**
+     * 查询 provider 当前白名单
+     */
+    @Operation(summary = "查询 provider 白名单")
+    @GetMapping("/{id}/whitelist")
+    public Result<List<ProviderWhitelistResponse>> listWhitelist(@PathVariable("id") String providerId) {
+        return Result.success(whitelistService.listByProvider(providerId).stream()
+                .map(ProviderWhitelistResponse::fromEntity)
+                .toList());
     }
 
     /**

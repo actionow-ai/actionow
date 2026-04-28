@@ -6,10 +6,13 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.actionow.ai.entity.ModelProvider;
 import com.actionow.ai.entity.ModelProviderScript;
 import com.actionow.ai.entity.ModelProviderSchema;
+import com.actionow.ai.entity.ProviderWorkspaceWhitelist;
 import com.actionow.ai.feign.SystemFeignClient;
 import com.actionow.ai.mapper.ModelProviderMapper;
 import com.actionow.ai.mapper.ModelProviderScriptMapper;
 import com.actionow.ai.mapper.ModelProviderSchemaMapper;
+import com.actionow.ai.mapper.ProviderWorkspaceWhitelistMapper;
+import com.actionow.common.security.workspace.WorkspaceInternalClient;
 import com.actionow.ai.plugin.AiModelPlugin;
 import com.actionow.ai.plugin.PluginExecutor;
 import com.actionow.ai.plugin.PluginRegistry;
@@ -52,6 +55,8 @@ public class ModelProviderServiceImpl implements ModelProviderService {
     private final ProviderConfigCache configCache;
     private final GroovyTemplateService groovyTemplateService;
     private final SystemFeignClient systemFeignClient;
+    private final ProviderWorkspaceWhitelistMapper whitelistMapper;
+    private final WorkspaceInternalClient workspaceInternalClient;
 
     @Override
     @Transactional
@@ -59,6 +64,9 @@ public class ModelProviderServiceImpl implements ModelProviderService {
         // 设置默认值
         if (provider.getEnabled() == null) {
             provider.setEnabled(true);
+        }
+        if (provider.getVisibility() == null || provider.getVisibility().isBlank()) {
+            provider.setVisibility("PUBLIC");
         }
         if (provider.getPriority() == null) {
             provider.setPriority(0);
@@ -116,6 +124,7 @@ public class ModelProviderServiceImpl implements ModelProviderService {
         if (provider.getIconUrl() != null) existing.setIconUrl(provider.getIconUrl());
         if (provider.getPriority() != null) existing.setPriority(provider.getPriority());
         if (provider.getEnabled() != null) existing.setEnabled(provider.getEnabled());
+        if (provider.getVisibility() != null) existing.setVisibility(provider.getVisibility());
         if (provider.getCustomHeaders() != null) existing.setCustomHeaders(provider.getCustomHeaders());
         if (provider.getApiKeyRef() != null) existing.setApiKeyRef(provider.getApiKeyRef());
         if (provider.getBaseUrlRef() != null) existing.setBaseUrlRef(provider.getBaseUrlRef());
@@ -318,6 +327,80 @@ public class ModelProviderServiceImpl implements ModelProviderService {
         );
         enrichWithChildTables(providers);
         return providers;
+    }
+
+    @Override
+    public List<ModelProvider> findVisibleEnabledByType(String providerType, String workspaceId) {
+        List<ModelProvider> all = findEnabledByType(providerType);
+        if (all.isEmpty()) {
+            return all;
+        }
+        return filterByVisibility(all, workspaceId);
+    }
+
+    /**
+     * 按可见性规则过滤 provider 列表（package-private 便于单测）。
+     */
+    List<ModelProvider> filterByVisibility(List<ModelProvider> providers, String workspaceId) {
+        boolean hasInternal = false;
+        boolean hasWhitelist = false;
+        for (ModelProvider p : providers) {
+            String v = p.getVisibility();
+            if ("INTERNAL".equals(v)) {
+                hasInternal = true;
+            } else if ("WHITELIST".equals(v)) {
+                hasWhitelist = true;
+            }
+        }
+
+        Boolean isInternalWs = null;
+        Set<String> whitelistedProviderIds = null;
+
+        if ((hasInternal || hasWhitelist) && (workspaceId == null || workspaceId.isBlank())) {
+            // 没有 workspace 上下文时，INTERNAL/WHITELIST 一律不可见
+            return providers.stream()
+                    .filter(p -> p.getVisibility() == null || "PUBLIC".equals(p.getVisibility()))
+                    .collect(Collectors.toList());
+        }
+
+        if (hasInternal) {
+            try {
+                Result<Boolean> resp = workspaceInternalClient.isInternal(workspaceId);
+                isInternalWs = resp != null && resp.isSuccess() && Boolean.TRUE.equals(resp.getData());
+            } catch (Exception ex) {
+                log.warn("调用 workspaceInternalClient.isInternal 失败，按非内部处理: workspaceId={}, err={}",
+                        workspaceId, ex.getMessage());
+                isInternalWs = false;
+            }
+        }
+
+        if (hasWhitelist) {
+            try {
+                whitelistedProviderIds = new HashSet<>(
+                        whitelistMapper.listProviderIdsByWorkspace(workspaceId));
+            } catch (Exception ex) {
+                log.warn("查询 provider 白名单失败，按空白名单处理: workspaceId={}, err={}",
+                        workspaceId, ex.getMessage());
+                whitelistedProviderIds = Set.of();
+            }
+        }
+
+        final boolean internalAllowed = Boolean.TRUE.equals(isInternalWs);
+        final Set<String> wlIds = whitelistedProviderIds == null ? Set.of() : whitelistedProviderIds;
+
+        return providers.stream().filter(p -> {
+            String v = p.getVisibility();
+            if (v == null || "PUBLIC".equals(v)) {
+                return true;
+            }
+            if ("INTERNAL".equals(v)) {
+                return internalAllowed;
+            }
+            if ("WHITELIST".equals(v)) {
+                return wlIds.contains(p.getId());
+            }
+            return false;
+        }).collect(Collectors.toList());
     }
 
     @Override

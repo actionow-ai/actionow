@@ -12,6 +12,7 @@ import type {
   LlmProviderDTO,
   ModelProviderDTO,
   NormalizedPageDTO,
+  ProviderWhitelistEntryDTO,
   SaveGroovyTemplateRequestDTO,
   SaveLlmProviderRequestDTO,
   SaveModelProviderRequestDTO,
@@ -111,6 +112,35 @@ export const aiAdminService = {
   testModelProviderConnection: (id: string) =>
     api.post<{ connected?: boolean; message?: string; latencyMs?: number }>(
       `${AI_ADMIN_BASE}/model-providers/${id}/test`
+    ),
+
+  // ============ Provider 灰度白名单 ============
+  /**
+   * 添加 workspace 到 provider 白名单（visibility=WHITELIST 时生效）
+   */
+  addProviderWhitelist: (
+    providerId: string,
+    data: { workspaceId: string; note?: string }
+  ) =>
+    api.post<ProviderWhitelistEntryDTO>(
+      `${AI_ADMIN_BASE}/model-providers/${providerId}/whitelist`,
+      data
+    ),
+
+  /**
+   * 从 provider 白名单移除 workspace
+   */
+  removeProviderWhitelist: (providerId: string, workspaceId: string) =>
+    api.delete<null>(
+      `${AI_ADMIN_BASE}/model-providers/${providerId}/whitelist/${workspaceId}`
+    ),
+
+  /**
+   * 查询 provider 白名单
+   */
+  listProviderWhitelist: (providerId: string) =>
+    api.get<ProviderWhitelistEntryDTO[]>(
+      `${AI_ADMIN_BASE}/model-providers/${providerId}/whitelist`
     ),
 
   // ============ LLM Provider ============

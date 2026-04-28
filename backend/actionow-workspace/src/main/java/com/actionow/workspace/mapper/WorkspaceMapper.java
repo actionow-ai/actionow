@@ -2,6 +2,8 @@ package com.actionow.workspace.mapper;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.actionow.workspace.entity.Workspace;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -67,4 +69,23 @@ public interface WorkspaceMapper extends BaseMapper<Workspace> {
      */
     @Select("SELECT COUNT(*) FROM t_workspace WHERE owner_id = #{ownerId} AND deleted = 0")
     int countByOwnerId(@Param("ownerId") String ownerId);
+
+    /**
+     * 系统管理员分页搜索 workspace（按 name/slug 模糊匹配，可选只看内部测试 workspace）
+     */
+    @Select("<script>" +
+            "SELECT * FROM t_workspace WHERE deleted = 0" +
+            "<if test='q != null and q != \"\"'>" +
+            "  AND (LOWER(name) LIKE CONCAT('%', LOWER(#{q}), '%')" +
+            "    OR LOWER(slug) LIKE CONCAT('%', LOWER(#{q}), '%')" +
+            "    OR id::text = #{q})" +
+            "</if>" +
+            "<if test='internalOnly != null and internalOnly == true'>" +
+            "  AND is_internal = true" +
+            "</if>" +
+            " ORDER BY created_at DESC" +
+            "</script>")
+    IPage<Workspace> adminSearchPage(Page<Workspace> page,
+                                     @Param("q") String q,
+                                     @Param("internalOnly") Boolean internalOnly);
 }

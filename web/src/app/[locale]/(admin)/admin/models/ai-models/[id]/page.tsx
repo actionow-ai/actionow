@@ -58,6 +58,14 @@ import type {
   SaveModelProviderRequestDTO,
   SystemConfigDTO,
 } from "@/lib/api/dto";
+import type {
+  ProviderVisibility,
+  ProviderWhitelistEntryDTO,
+} from "@/lib/api/dto/ai-admin.dto";
+import {
+  workspaceAdminService,
+  type WorkspaceAdminDTO,
+} from "@/lib/api/services/workspace-admin.service";
 import { ResizablePanels } from "@/components/ui/resizable-panels";
 import { CodeEditor, type CodeLang } from "@/components/admin/ai-model/code-editor";
 import {
@@ -82,7 +90,8 @@ type RightTab =
   | "custom"
   | "pricing"
   | "systemPrompt"
-  | "responseSchema";
+  | "responseSchema"
+  | "whitelist";
 type RequestSubTab = "script" | "schema";
 type ResponseSubTab = "script" | "schema";
 type CodeTabId = "request" | "response" | "custom" | "pricing";
@@ -137,6 +146,13 @@ const MAIN_TABS: {
   { id: "requestGroup", label: "请求 & 输入", Icon: Terminal },
   { id: "responseGroup", label: "响应 & 输出", Icon: ArrowRightLeft },
   { id: "custom", label: "自定义", Icon: Zap },
+  { id: "whitelist", label: "可见性 / 白名单", Icon: Lock },
+];
+
+const VISIBILITY_OPTIONS: { id: ProviderVisibility; label: string; desc: string }[] = [
+  { id: "PUBLIC", label: "PUBLIC", desc: "所有 workspace 可见(默认)" },
+  { id: "INTERNAL", label: "INTERNAL", desc: "仅 is_internal=true 的 workspace 可见" },
+  { id: "WHITELIST", label: "WHITELIST", desc: "仅白名单中的 workspace 可见" },
 ];
 
 const CODE_TAB_META: Record<
@@ -302,6 +318,14 @@ export default function AiModelEditPage() {
   const [pluginType, setPluginType] = useState("GROOVY");
   const [iconUrl, setIconUrl] = useState("");
   const [enabled, setEnabled] = useState(true);
+  const [visibility, setVisibility] = useState<ProviderVisibility>("PUBLIC");
+
+  // ── Whitelist (可见性=WHITELIST 时管理)
+  const [whitelistEntries, setWhitelistEntries] = useState<ProviderWhitelistEntryDTO[]>([]);
+  const [wlLoading, setWlLoading] = useState(false);
+  const [wlSearchQuery, setWlSearchQuery] = useState("");
+  const [wlSearchResults, setWlSearchResults] = useState<WorkspaceAdminDTO[]>([]);
+  const [wlSearching, setWlSearching] = useState(false);
 
   // ── HTTP & Auth
   const [baseUrl, setBaseUrl] = useState("");
@@ -431,6 +455,14 @@ export default function AiModelEditPage() {
     }
   }, [providerType, rightTab]);
 
+  // 进入"可见性 / 白名单"Tab 时自动拉一次白名单
+  useEffect(() => {
+    if (rightTab === "whitelist" && !isCreate && id) {
+      loadWhitelist();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rightTab, id, isCreate]);
+
   // ─── Load ────────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -447,6 +479,7 @@ export default function AiModelEditPage() {
         setPluginType(d.pluginType || "GROOVY");
         setIconUrl(d.iconUrl || "");
         setEnabled(d.enabled ?? true);
+        setVisibility((d.visibility as ProviderVisibility) ?? "PUBLIC");
 
         setBaseUrl(d.baseUrl || "");
         setEndpoint(d.endpoint || "");
@@ -562,6 +595,7 @@ export default function AiModelEditPage() {
       pluginType: pluginType.trim() || undefined,
       iconUrl: iconUrl.trim() || undefined,
       enabled,
+      visibility,
       baseUrl: baseUrl.trim() || undefined,
       endpoint: endpoint.trim() || undefined,
       httpMethod: httpMethod || undefined,
@@ -698,6 +732,63 @@ export default function AiModelEditPage() {
   };
   const onHttpMethodChange = (key: ReactKey | ReactKey[] | null) => {
     if (key && !Array.isArray(key)) setHttpMethod(String(key));
+  };
+  const onVisibilityChange = (key: ReactKey | ReactKey[] | null) => {
+    if (key && !Array.isArray(key)) setVisibility(String(key) as ProviderVisibility);
+  };
+
+  // ─── Whitelist handlers ───────────────────────────────────────────────────
+  const loadWhitelist = async () => {
+    if (isCreate || !id) return;
+    setWlLoading(true);
+    try {
+      const list = await aiAdminService.listProviderWhitelist(id);
+      setWhitelistEntries(list ?? []);
+    } catch (e) {
+      toast.danger(getErrorFromException(e, "加载白名单失败"));
+    } finally {
+      setWlLoading(false);
+    }
+  };
+
+  const handleSearchWorkspaces = async () => {
+    setWlSearching(true);
+    try {
+      const page = await workspaceAdminService.searchWorkspaces({
+        q: wlSearchQuery.trim() || undefined,
+        size: 20,
+      });
+      setWlSearchResults(page?.records ?? []);
+    } catch (e) {
+      toast.danger(getErrorFromException(e, "搜索 workspace 失败"));
+    } finally {
+      setWlSearching(false);
+    }
+  };
+
+  const handleAddWhitelist = async (workspaceId: string, workspaceName: string) => {
+    if (isCreate || !id) {
+      toast.danger("请先保存 provider");
+      return;
+    }
+    try {
+      await aiAdminService.addProviderWhitelist(id, { workspaceId });
+      toast.success(`已加入白名单: ${workspaceName}`);
+      await loadWhitelist();
+    } catch (e) {
+      toast.danger(getErrorFromException(e, "添加白名单失败"));
+    }
+  };
+
+  const handleRemoveWhitelist = async (workspaceId: string) => {
+    if (isCreate || !id) return;
+    try {
+      await aiAdminService.removeProviderWhitelist(id, workspaceId);
+      toast.success("已移除");
+      await loadWhitelist();
+    } catch (e) {
+      toast.danger(getErrorFromException(e, "移除失败"));
+    }
   };
 
   // ─── Loading skeleton ──────────────────────────────────────────────────────
@@ -983,6 +1074,139 @@ export default function AiModelEditPage() {
     </>
   );
 
+  // ─── Whitelist tab ────────────────────────────────────────────────────────
+
+  const renderWhitelistTab = () => (
+    <div className="flex h-full flex-col overflow-y-auto bg-[#1e1e1e] p-4 text-xs">
+      {isCreate ? (
+        <div className="rounded-lg border border-dashed border-[#3a3a3a] p-6 text-center text-[#858585]">
+          请先保存 provider 后再管理白名单
+        </div>
+      ) : (
+        <div className="flex flex-col gap-4">
+          {/* 头部说明 */}
+          <div className="flex items-center gap-2 rounded-lg border border-[#3a3a3a] bg-[#252526] px-3 py-2 text-[11px] text-[#858585]">
+            <Lock className="size-3.5 shrink-0 text-amber-400" />
+            <span>
+              当 visibility = <span className="font-mono text-amber-400">WHITELIST</span> 时,只有名单内的 workspace 能看到本 provider。
+              当前 visibility:
+              <span className="ml-1 font-mono font-medium text-foreground">{visibility}</span>
+            </span>
+          </div>
+
+          {/* 添加区 */}
+          <div className="rounded-lg border border-[#3a3a3a] bg-[#252526] p-3">
+            <Label className="mb-2 block text-[11px] font-medium text-[#cccccc]">添加 workspace</Label>
+            <div className="flex gap-2">
+              <Input
+                value={wlSearchQuery}
+                onChange={(e) => setWlSearchQuery(e.target.value)}
+                placeholder="按 名称 / slug / UUID 搜索 workspace"
+                className="flex-1"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleSearchWorkspaces();
+                  }
+                }}
+              />
+              <Button onPress={handleSearchWorkspaces} size="sm" isPending={wlSearching}>
+                {({ isPending }) => (isPending ? <Spinner color="current" size="sm" /> : "搜索")}
+              </Button>
+            </div>
+            {wlSearchResults.length > 0 && (
+              <div className="mt-2 max-h-48 overflow-y-auto rounded border border-[#3a3a3a]">
+                {wlSearchResults.map((ws) => {
+                  const already = whitelistEntries.some((e) => e.workspaceId === ws.id);
+                  return (
+                    <div
+                      key={ws.id}
+                      className="flex items-center gap-2 border-b border-[#3a3a3a] px-2 py-1.5 text-[11px] last:border-b-0"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate font-medium text-[#cccccc]">{ws.name}</div>
+                        <div className="truncate font-mono text-[10px] text-[#858585]">
+                          {ws.slug}
+                          {ws.isInternal && (
+                            <span className="ml-1 rounded bg-purple-500/20 px-1 py-0.5 text-purple-300">
+                              internal
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {already ? (
+                        <Chip size="sm" color="success">
+                          已加入
+                        </Chip>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onPress={() => handleAddWhitelist(ws.id, ws.name)}
+                        >
+                          + 添加
+                        </Button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {wlSearching === false && wlSearchResults.length === 0 && wlSearchQuery && (
+              <p className="mt-2 text-[10px] text-[#858585]">无匹配 workspace</p>
+            )}
+          </div>
+
+          {/* 白名单列表 */}
+          <div>
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-[11px] font-medium text-[#cccccc]">
+                当前白名单 ({whitelistEntries.length})
+              </span>
+              <Button size="sm" variant="tertiary" onPress={loadWhitelist} isPending={wlLoading}>
+                {({ isPending }) => (isPending ? <Spinner color="current" size="sm" /> : "刷新")}
+              </Button>
+            </div>
+            {whitelistEntries.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-[#3a3a3a] p-6 text-center text-[#858585]">
+                暂无白名单条目
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-lg border border-[#3a3a3a]">
+                <table className="w-full text-[11px]">
+                  <thead className="bg-[#252526]">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium text-[#cccccc]">Workspace ID</th>
+                      <th className="px-3 py-2 text-left font-medium text-[#cccccc]">备注</th>
+                      <th className="px-3 py-2 text-right font-medium text-[#cccccc]">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {whitelistEntries.map((entry) => (
+                      <tr key={entry.id} className="border-t border-[#3a3a3a]">
+                        <td className="px-3 py-2 font-mono text-[#cccccc]">{entry.workspaceId}</td>
+                        <td className="px-3 py-2 text-[#858585]">{entry.note || "-"}</td>
+                        <td className="px-3 py-2 text-right">
+                          <Button
+                            size="sm"
+                            variant="tertiary"
+                            onPress={() => handleRemoveWhitelist(entry.workspaceId)}
+                          >
+                            <Trash2 className="size-3" />
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   // ─── Panel contents ────────────────────────────────────────────────────────
 
   const leftPanel = (
@@ -1080,6 +1304,38 @@ export default function AiModelEditPage() {
                 </Switch.Control>
               </Switch>
             </div>
+
+            <Select selectedKey={visibility} onSelectionChange={onVisibilityChange}>
+              <Label className="text-xs">可见性</Label>
+              <Select.Trigger>
+                <Select.Value>
+                  {() => (
+                    <span className="text-xs font-medium">
+                      {VISIBILITY_OPTIONS.find((v) => v.id === visibility)?.label ?? visibility}
+                    </span>
+                  )}
+                </Select.Value>
+                <Select.Indicator />
+              </Select.Trigger>
+              <Select.Popover>
+                <ListBox>
+                  {VISIBILITY_OPTIONS.map((v) => (
+                    <ListBox.Item key={v.id} id={v.id} textValue={v.label}>
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-xs font-medium">{v.label}</span>
+                        <span className="text-[10px] text-muted">{v.desc}</span>
+                      </div>
+                      <ListBox.ItemIndicator />
+                    </ListBox.Item>
+                  ))}
+                </ListBox>
+              </Select.Popover>
+            </Select>
+            {visibility === "WHITELIST" && (
+              <p className="text-[10px] text-muted">
+                白名单为空时无人可见,请到右侧「可见性 / 白名单」Tab 添加 workspace
+              </p>
+            )}
           </div>
         </section>
 
@@ -1667,6 +1923,7 @@ export default function AiModelEditPage() {
         {rightTab === "pricing" && renderCodeTab("pricing")}
         {rightTab === "systemPrompt" && renderSystemPromptTab()}
         {rightTab === "responseSchema" && renderResponseSchemaTab()}
+        {rightTab === "whitelist" && renderWhitelistTab()}
       </div>
     </div>
   );

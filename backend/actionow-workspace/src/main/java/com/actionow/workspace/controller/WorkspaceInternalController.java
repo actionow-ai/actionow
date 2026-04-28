@@ -87,6 +87,17 @@ public class WorkspaceInternalController {
     }
 
     /**
+     * 查询工作空间是否为内部测试 workspace
+     */
+    @GetMapping("/{workspaceId}/is-internal")
+    public Result<Boolean> isInternal(@PathVariable String workspaceId) {
+        boolean internal = workspaceService.findById(workspaceId)
+                .map(w -> Boolean.TRUE.equals(w.getIsInternal()))
+                .orElse(false);
+        return Result.success(internal);
+    }
+
+    /**
      * 同步工作空间订阅计划（供 Billing 服务调用）
      *
      * @param workspaceId 工作空间ID
