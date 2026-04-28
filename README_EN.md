@@ -7,7 +7,7 @@
 
 <p>From script to storyboard, from character to final cut — Actionow turns the<br/>
 director's call to <i>action, now</i> into an engineering-grade, agent-driven,<br/>
-self-hostable workspace for creative teams — onboard the latest models without a release.</p>
+self-hostable workspace — onboard the latest models without a release, with code-level control and self-hosting baked in.</p>
 
 <p><a href="https://www.actionow.ai"><b>actionow.ai</b></a></p>
 
@@ -46,9 +46,9 @@ self-hostable workspace for creative teams — onboard the latest models without
 
 Actionow targets the full pipeline of screenwriting, storyboard collaboration, and AIGC production with an agent-driven, self-hostable open-source workspace.
 
-The platform organizes every creative action around the content graph **Script → Episode → Scene → Storyboard → Character / Prop / Style / Asset**. Every entity is versioned and lineage-tracked; every interaction is observable, replayable, and reusable by agents.
+The platform organizes every creative action around the content graph **Script → Episode → Sequence → Storyboard → Character / Scene / Prop / Style / Asset**. Every entity is versioned and lineage-tracked; every interaction is observable, replayable, and reusable by agents.
 
-| Audience                       |                                                                                                                     |
+| Audience                       | How they benefit                                                                                                    |
 |--------------------------------|---------------------------------------------------------------------------------------------------------------------|
 | Film, ad, and animation teams  | Connect writers, art, and production through agents; turn storyboards and assets into reusable inventory.           |
 | AIGC studios                   | Wrap multimodal model capabilities as Skills and compose them per character or scene.                               |
@@ -141,21 +141,22 @@ PostgreSQL Schema-level isolation
 <td width="50%" valign="top">
 
 ### Credits & billing
-Workspace wallet with multi-channel payments
+Workspace wallet with dynamic payment channels
 
 - Recharge / spend / refund / transfer / freeze ledger
 - Per-member quota with daily / weekly / monthly reset
-- Stripe + WeChat Pay · Free / Basic / Pro / Enterprise
+- Hot-swappable payment providers · gift code redemption · Free / Basic / Pro / Enterprise
 
 </td>
 <td width="50%" valign="top">
 
 ### Pluggable AI model gateway
-Enterprise model gateway powered by a Groovy sandbox
+Enterprise-grade implementation powered by a Groovy sandbox
 
 - **Onboard new models without a release** — just write a script
 - Four response modes: BLOCKING / STREAMING / CALLBACK / POLLING
-- Retry · rate limit · circuit breaker · timeout · Bearer / API Key / AK-SK
+- Retry · rate limit · circuit breaker · timeout (Resilience4j, runtime-configurable)
+- Provider auto-fallback · gradual-rollout allowlist · Bearer / API Key / AK-SK
 
 </td>
 </tr>
@@ -189,7 +190,7 @@ Unified models for scripts / storyboards / characters / assets
 
 - Versioning across all entities
 - `t_asset_lineage` for full asset lineage
-- Backend already models canvas nodes + 3 layout engines
+- Canvas nodes and three layout engines modeled in the backend; frontend integration in progress
 
 </td>
 <td width="50%" valign="top">
@@ -280,7 +281,8 @@ Endpoints:
 
 | Capability                        | Goal                                                                                                                          |
 |-----------------------------------|-------------------------------------------------------------------------------------------------------------------------------|
-| Enterprise model gateway evolution| The Groovy sandbox already supports **zero-release model onboarding** (write a script, hot-load it). Next: tenant-level quota & billing, routing strategies, gray release & A/B, cross-provider fallback, prompt version management, and end-to-end call-chain observability. |
+| Model gateway — shipped           | Groovy sandbox hot-load (**zero-release model onboarding**), provider auto-fallback, gradual-rollout allowlist, Resilience4j runtime configuration. |
+| Model gateway — next               | Tenant-level quota & billing, routing strategies, full A/B framework, prompt version management, end-to-end call-chain observability. |
 | Infinite canvas                   | High-performance viewports, layered rendering, node grouping, layout templates, and parallel multi-canvas editing.            |
 | Team collaboration                | Live cursors and comments, threaded annotations, multi-user conflict merging, activity timelines, and a notification center on top of the existing Presence + edit-lock system. |
 | Online video editing              | Timeline, shot-level cutting, transitions and subtitles, plus a cloud rendering pipeline linked back to asset versions.       |
@@ -295,7 +297,7 @@ Endpoints:
 
 ## License
 
-This repository is released under a [modified version of the Apache License 2.0](LICENSE) with additional conditions (covering multi-tenant commercial usage and frontend LOGO/copyright protections). Please review [LICENSE](LICENSE) carefully before commercial use.
+This repository is released under [Apache License 2.0](LICENSE) with a small set of additional conditions (covering multi-tenant commercial usage and frontend LOGO/copyright protections). Please review [LICENSE](LICENSE) carefully before commercial use.
 
 ## Community
 
