@@ -170,6 +170,20 @@ public class ModelProvider extends BaseEntity {
     @TableField(typeHandler = JacksonTypeHandler.class)
     private Map<String, Object> textConfig;
 
+    // ========== 调用队列配置（per-provider，未配置则走全局默认队列） ==========
+
+    /** RabbitMQ 队列名；NULL 走 runtime.ai.queue_default_name */
+    private String queueName;
+
+    /** 消费者并发数；NULL 取 runtime.ai.queue_default_concurrency */
+    private Integer queueConcurrency;
+
+    /** consumer prefetch；NULL 取 runtime.ai.queue_default_prefetch */
+    private Integer queuePrefetch;
+
+    /** 队列最大积压消息数；满后新消息被 broker reject（背压） */
+    private Integer queueMaxLength;
+
     // ========== 子表字段（exist = false，需从子表加载） ==========
 
     /**

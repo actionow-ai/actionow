@@ -1,6 +1,10 @@
 package com.actionow.ai.plugin.resilience;
 
 import com.actionow.ai.config.AiRuntimeConfigService;
+import com.actionow.ai.plugin.model.PluginConfig;
+import io.github.resilience4j.bulkhead.Bulkhead;
+import io.github.resilience4j.bulkhead.BulkheadConfig;
+import io.github.resilience4j.bulkhead.BulkheadRegistry;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
@@ -10,6 +14,7 @@ import io.github.resilience4j.ratelimiter.RateLimiterRegistry;
 import io.github.resilience4j.retry.Retry;
 import io.github.resilience4j.retry.RetryConfig;
 import io.github.resilience4j.retry.RetryRegistry;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
@@ -38,11 +43,13 @@ public class PluginResilienceConfig {
     private final RetryRegistry retryRegistry;
     private final RateLimiterRegistry rateLimiterRegistry;
     private final CircuitBreakerRegistry circuitBreakerRegistry;
+    private final BulkheadRegistry bulkheadRegistry;
 
     // 缓存
     private final ConcurrentHashMap<String, Retry> retryCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, RateLimiter> rateLimiterCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, CircuitBreaker> circuitBreakerCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Bulkhead> bulkheadCache = new ConcurrentHashMap<>();
 
     private final AiRuntimeConfigService runtimeConfig;
 
@@ -71,19 +78,76 @@ public class PluginResilienceConfig {
             .slidingWindowSize(runtimeConfig.getCbSlidingWindowSize())
             .minimumNumberOfCalls(runtimeConfig.getCbMinimumCalls())
             .permittedNumberOfCallsInHalfOpenState(runtimeConfig.getCbHalfOpenPermittedCalls())
-            .recordExceptions(IOException.class, TimeoutException.class)
+            // 仅 IO 类故障计入熔断；TimeoutException 由 shouldRecordAsFailure 单独裁决
+            // （连接超时算失败，响应体读取超时不算 — 生图本就慢，不应被熔断）
+            .recordExceptions(IOException.class)
             .recordException(this::shouldRecordAsFailure)
             .build();
         this.circuitBreakerRegistry = CircuitBreakerRegistry.of(defaultCircuitBreakerConfig);
 
-        log.info("PluginResilienceConfig initialized: cb_slidingWindow={}, cb_minimumCalls={}, cb_halfOpenPermitted={}, cb_waitOpenSec={}, failureRateThreshold={}, retryWaitMs={}, rateLimitRefreshSec={}",
+        // Bulkhead：默认基于 Semaphore，maxWaitDuration=0 → 超额立即拒绝
+        // 与队列削峰是两层防护：队列控入口积压，Bulkhead 控 worker→上游瞬时并发
+        BulkheadConfig defaultBulkheadConfig = BulkheadConfig.custom()
+            .maxConcurrentCalls(runtimeConfig.getBulkheadMaxConcurrent())
+            .maxWaitDuration(Duration.ZERO)
+            .build();
+        this.bulkheadRegistry = BulkheadRegistry.of(defaultBulkheadConfig);
+
+        log.info("PluginResilienceConfig initialized: cb_slidingWindow={}, cb_minimumCalls={}, cb_halfOpenPermitted={}, cb_waitOpenSec={}, failureRateThreshold={}, retryWaitMs={}, rateLimitRefreshSec={}, bulkheadMax={}",
             runtimeConfig.getCbSlidingWindowSize(),
             runtimeConfig.getCbMinimumCalls(),
             runtimeConfig.getCbHalfOpenPermittedCalls(),
             runtimeConfig.getCbWaitDurationOpenStateSeconds(),
             runtimeConfig.getFailureRateThreshold(),
             runtimeConfig.getRetryWaitDurationMs(),
-            runtimeConfig.getRateLimitRefreshPeriodSeconds());
+            runtimeConfig.getRateLimitRefreshPeriodSeconds(),
+            runtimeConfig.getBulkheadMaxConcurrent());
+    }
+
+    /**
+     * 获取或创建 Bulkhead（每 Provider 独立配额）。
+     * 超额立即拒绝（maxWaitDuration=0），让上层把请求塞回队列或返回 BUSY，
+     * 而不是把线程僵死在 acquire 等待上。
+     */
+    public Bulkhead getOrCreateBulkhead(String providerId) {
+        String key = providerId + "_bulkhead";
+        return bulkheadCache.computeIfAbsent(key, k -> {
+            BulkheadConfig config = BulkheadConfig.custom()
+                .maxConcurrentCalls(runtimeConfig.getBulkheadMaxConcurrent())
+                .maxWaitDuration(Duration.ZERO)
+                .build();
+            Bulkhead bh = bulkheadRegistry.bulkhead(key, config);
+            bh.getEventPublisher()
+                .onCallRejected(event -> log.warn("Bulkhead rejected provider {}: max concurrent reached", providerId));
+            return bh;
+        });
+    }
+
+    /**
+     * 注册到 RuntimeConfigService：CB / Retry / RateLimiter 相关键变更时
+     * 主动失效缓存，让下次 getOrCreate* 重新读取最新值构建。
+     * 解决"改了 Redis 但旧 CircuitBreaker 还在用启动快照"的问题。
+     */
+    @PostConstruct
+    public void registerConfigChangeListener() {
+        runtimeConfig.addChangeListener(key -> {
+            if (key == null) {
+                return;
+            }
+            if (key.startsWith("runtime.ai.cb_") || key.equals(AiRuntimeConfigService.FAILURE_RATE_THRESHOLD)) {
+                log.info("[Resilience] CB-related config changed (key={}), invalidating circuit breaker cache", key);
+                circuitBreakerCache.clear();
+            } else if (key.startsWith("runtime.ai.retry_") || key.equals(AiRuntimeConfigService.DEFAULT_MAX_RETRIES)) {
+                log.info("[Resilience] Retry config changed (key={}), invalidating retry cache", key);
+                retryCache.clear();
+            } else if (key.startsWith("runtime.ai.rate_limit_") || key.equals(AiRuntimeConfigService.DEFAULT_RATE_LIMIT)) {
+                log.info("[Resilience] RateLimiter config changed (key={}), invalidating rate limiter cache", key);
+                rateLimiterCache.clear();
+            } else if (key.equals(AiRuntimeConfigService.BULKHEAD_MAX_CONCURRENT)) {
+                log.info("[Resilience] Bulkhead config changed (key={}), invalidating bulkhead cache", key);
+                bulkheadCache.clear();
+            }
+        });
     }
 
     /**
@@ -153,26 +217,97 @@ public class PluginResilienceConfig {
     }
 
     /**
-     * 获取或创建熔断器
-     *
-     * @param providerId 提供商ID
-     * @return CircuitBreaker实例
+     * 获取或创建熔断器（无 PluginConfig 重载，使用全局默认）
      */
     public CircuitBreaker getOrCreateCircuitBreaker(String providerId) {
+        return getOrCreateCircuitBreaker(providerId, null);
+    }
+
+    /**
+     * 获取或创建熔断器，支持 PluginConfig 级覆盖。
+     *
+     * 解析顺序：PluginConfig.circuitBreaker 字段 → 全局 runtimeConfig 默认。
+     * IMAGE/VIDEO/AUDIO 类 provider 若未显式设置，自动启用 TIME_BASED 滑窗
+     * （60 秒窗口，更适合慢请求频率不均的生图场景）。
+     */
+    public CircuitBreaker getOrCreateCircuitBreaker(String providerId, PluginConfig config) {
         String key = providerId + "_circuitbreaker";
         return circuitBreakerCache.computeIfAbsent(key, k -> {
-            CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker(key);
+            CircuitBreakerConfig cbConfig = buildCircuitBreakerConfig(config);
+            CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker(key, cbConfig);
 
-            // 添加事件监听
             circuitBreaker.getEventPublisher()
                 .onStateTransition(event -> log.warn("Circuit breaker for provider {} transitioned from {} to {}",
                     providerId, event.getStateTransition().getFromState(), event.getStateTransition().getToState()))
-                .onCallNotPermitted(event -> log.warn("Circuit breaker OPEN for provider {}, call not permitted", providerId))
+                .onCallNotPermitted(event -> log.warn("Circuit breaker {} for provider {}, call not permitted",
+                    circuitBreaker.getState(), providerId))
                 .onError(event -> log.debug("Circuit breaker recorded error for provider {}: {}",
                     providerId, event.getThrowable().getMessage()));
 
             return circuitBreaker;
         });
+    }
+
+    /**
+     * 根据 PluginConfig 覆盖 + 全局默认 + provider 类型，构建 CircuitBreakerConfig。
+     */
+    private CircuitBreakerConfig buildCircuitBreakerConfig(PluginConfig config) {
+        PluginConfig.CircuitBreakerOverride override = config != null ? config.getCircuitBreaker() : null;
+        boolean longBlocking = config != null && isLongBlockingProviderType(config.getProviderType());
+
+        // 滑窗类型：override > 长耗时默认 TIME_BASED > COUNT_BASED
+        CircuitBreakerConfig.SlidingWindowType windowType;
+        if (override != null && override.getWindowType() != null) {
+            windowType = "TIME_BASED".equalsIgnoreCase(override.getWindowType())
+                ? CircuitBreakerConfig.SlidingWindowType.TIME_BASED
+                : CircuitBreakerConfig.SlidingWindowType.COUNT_BASED;
+        } else if (longBlocking) {
+            windowType = CircuitBreakerConfig.SlidingWindowType.TIME_BASED;
+        } else {
+            windowType = CircuitBreakerConfig.SlidingWindowType.COUNT_BASED;
+        }
+
+        int windowSize;
+        if (override != null && override.getSlidingWindowSize() != null) {
+            windowSize = override.getSlidingWindowSize();
+        } else if (windowType == CircuitBreakerConfig.SlidingWindowType.TIME_BASED) {
+            // 时间窗默认 60s（生图调用率低，需要更长统计窗口才能积累有效样本）
+            windowSize = 60;
+        } else {
+            windowSize = runtimeConfig.getCbSlidingWindowSize();
+        }
+
+        int minCalls = override != null && override.getMinimumNumberOfCalls() != null
+            ? override.getMinimumNumberOfCalls()
+            : runtimeConfig.getCbMinimumCalls();
+        int halfOpenPermitted = override != null && override.getPermittedCallsInHalfOpen() != null
+            ? override.getPermittedCallsInHalfOpen()
+            : runtimeConfig.getCbHalfOpenPermittedCalls();
+        int waitOpenSec = override != null && override.getWaitDurationOpenSeconds() != null
+            ? override.getWaitDurationOpenSeconds()
+            : runtimeConfig.getCbWaitDurationOpenStateSeconds();
+        float failureRate = override != null && override.getFailureRateThreshold() != null
+            ? override.getFailureRateThreshold()
+            : runtimeConfig.getFailureRateThreshold();
+
+        return CircuitBreakerConfig.custom()
+            .slidingWindowType(windowType)
+            .slidingWindowSize(windowSize)
+            .minimumNumberOfCalls(minCalls)
+            .permittedNumberOfCallsInHalfOpenState(halfOpenPermitted)
+            .waitDurationInOpenState(Duration.ofSeconds(waitOpenSec))
+            .failureRateThreshold(failureRate)
+            .recordExceptions(IOException.class)
+            .recordException(this::shouldRecordAsFailure)
+            .build();
+    }
+
+    private boolean isLongBlockingProviderType(String providerType) {
+        if (providerType == null) {
+            return false;
+        }
+        String upper = providerType.toUpperCase();
+        return "IMAGE".equals(upper) || "VIDEO".equals(upper) || "AUDIO".equals(upper);
     }
 
     /**
@@ -191,15 +326,20 @@ public class PluginResilienceConfig {
     }
 
     /**
-     * 判断是否应记录为熔断器失败
+     * 判断是否应记录为熔断器失败。
+     *
+     * 设计原则：只把"上游真的挂了"的信号计入失败率，把"上游正常但慢"排除。
+     * - 5xx：上游真错 → 计失败
+     * - IOException：连接异常 → 计失败
+     * - TimeoutException：不计失败（生图/视频长耗时正常会触顶 timeout，
+     *   不应让 CB 误判服务挂掉。真挂会以 IOException/5xx 体现）
      */
     private boolean shouldRecordAsFailure(Throwable throwable) {
         if (throwable instanceof WebClientResponseException e) {
             int statusCode = e.getStatusCode().value();
-            // 5xx错误和超时记录为失败
             return statusCode >= 500;
         }
-        return throwable instanceof IOException || throwable instanceof TimeoutException;
+        return throwable instanceof IOException;
     }
 
     /**
@@ -209,6 +349,7 @@ public class PluginResilienceConfig {
         retryCache.remove(providerId + "_retry");
         rateLimiterCache.remove(providerId + "_ratelimiter");
         circuitBreakerCache.remove(providerId + "_circuitbreaker");
+        bulkheadCache.remove(providerId + "_bulkhead");
         log.info("Cleared resilience cache for provider: {}", providerId);
     }
 
@@ -219,6 +360,7 @@ public class PluginResilienceConfig {
         retryCache.clear();
         rateLimiterCache.clear();
         circuitBreakerCache.clear();
+        bulkheadCache.clear();
         log.info("Cleared all resilience cache");
     }
 

@@ -36,7 +36,7 @@ class ModelProviderVisibilityFilterTest {
         workspaceInternalClient = Mockito.mock(WorkspaceInternalClient.class);
         service = new ModelProviderServiceImpl(
                 null, null, null, null, null, null, null, null,
-                whitelistMapper, workspaceInternalClient);
+                whitelistMapper, workspaceInternalClient, null);
     }
 
     private ModelProvider provider(String id, String visibility) {

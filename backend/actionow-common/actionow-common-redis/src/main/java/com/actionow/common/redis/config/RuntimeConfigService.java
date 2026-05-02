@@ -10,6 +10,9 @@ import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.List;
+import java.util.function.Consumer;
 
 /**
  * 运行时参数动态配置抽象基类
@@ -48,6 +51,19 @@ public abstract class RuntimeConfigService implements MessageListener {
 
     /** 编译时默认值（configKey → value），启动后不可变 */
     private final ConcurrentHashMap<String, String> defaults = new ConcurrentHashMap<>();
+
+    /** 外部可注册的配置变更监听器（在 onConfigChanged 之后触发） */
+    private final List<Consumer<String>> externalListeners = new CopyOnWriteArrayList<>();
+
+    /**
+     * 注册外部配置变更监听器。
+     * 任意配置键变更后被回调，参数为变更的键。监听器实现需自行判断是否关心该键。
+     * 用途：让依赖运行时配置的组件（如 PluginResilienceConfig）在配置变更时
+     * 主动失效内部缓存，避免"改了 Redis 但旧 CircuitBreaker/Pool 仍在用旧值"。
+     */
+    public void addChangeListener(Consumer<String> listener) {
+        externalListeners.add(listener);
+    }
 
     protected final StringRedisTemplate redisTemplate;
     private final RedisMessageListenerContainer listenerContainer;
@@ -164,6 +180,14 @@ public abstract class RuntimeConfigService implements MessageListener {
                     configKey, oldValue, newValue);
 
             onConfigChanged(configKey, oldValue, newValue);
+
+            for (Consumer<String> listener : externalListeners) {
+                try {
+                    listener.accept(configKey);
+                } catch (Exception ex) {
+                    log.warn("[RuntimeConfig] external listener failed for key={}: {}", configKey, ex.getMessage());
+                }
+            }
 
         } catch (Exception e) {
             log.error("[RuntimeConfig] Failed to process config change: {}", e.getMessage(), e);

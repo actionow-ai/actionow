@@ -34,11 +34,16 @@ public class RabbitMqConfig {
         Jackson2JsonMessageConverter converter = new Jackson2JsonMessageConverter(mapper);
 
         DefaultJackson2JavaTypeMapper typeMapper = new DefaultJackson2JavaTypeMapper();
+        // 必须显式列出每个会被反序列化的子包；spring-amqp 的 isTrustedPackage 在
+        // 部分版本里对祖先包前缀的兼容并不完整，曾经的 "com.actionow" 兜底不可靠。
+        // 新增 provider 调用消息时（如 com.actionow.ai.plugin.queue.*）需要在此追加。
         typeMapper.setTrustedPackages(
                 "com.actionow.common.mq.message",
                 "com.actionow.collab",
                 "com.actionow.task",
                 "com.actionow.project",
+                "com.actionow.ai",
+                "com.actionow.ai.plugin.queue",
                 "com.actionow"
         );
         typeMapper.setTypePrecedence(DefaultJackson2JavaTypeMapper.TypePrecedence.INFERRED);

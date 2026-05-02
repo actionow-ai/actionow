@@ -191,6 +191,17 @@ public class UpdateModelProviderRequest {
      */
     private Map<String, String> customHeaders;
 
+    // ========== 调用队列配置（部分字段为 null = 不更新） ==========
+
+    /** RabbitMQ 队列名 */
+    private String queueName;
+    /** 消费者并发数 */
+    private Integer queueConcurrency;
+    /** consumer prefetch */
+    private Integer queuePrefetch;
+    /** 队列最大积压消息数（背压上限） */
+    private Integer queueMaxLength;
+
     // ========== TEXT 类型专属字段 ==========
 
     /**

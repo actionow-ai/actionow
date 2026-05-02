@@ -61,6 +61,15 @@ export interface ModelProviderDTO {
   inputSchema?: unknown[];
   inputGroups?: unknown[];
   exclusiveGroups?: unknown[];
+  // ===== 调用队列配置（per-provider 覆盖；未配置则走全局默认） =====
+  /** RabbitMQ 队列名；空字符串/null 表示走全局默认队列 */
+  queueName?: string | null;
+  /** 消费者并发数 */
+  queueConcurrency?: number | null;
+  /** consumer prefetch */
+  queuePrefetch?: number | null;
+  /** 队列最大积压消息数（背压上限） */
+  queueMaxLength?: number | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -124,6 +133,11 @@ export interface SaveModelProviderRequestDTO {
   inputSchema?: unknown[];
   inputGroups?: unknown[];
   exclusiveGroups?: unknown[];
+  // ===== 调用队列配置 =====
+  queueName?: string;
+  queueConcurrency?: number;
+  queuePrefetch?: number;
+  queueMaxLength?: number;
 }
 
 export interface LlmProviderDTO {

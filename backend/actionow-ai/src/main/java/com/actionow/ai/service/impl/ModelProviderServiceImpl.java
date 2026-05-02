@@ -57,6 +57,7 @@ public class ModelProviderServiceImpl implements ModelProviderService {
     private final SystemFeignClient systemFeignClient;
     private final ProviderWorkspaceWhitelistMapper whitelistMapper;
     private final WorkspaceInternalClient workspaceInternalClient;
+    private final com.actionow.ai.plugin.queue.ProviderQueueRouter providerQueueRouter;
 
     @Override
     @Transactional
@@ -129,6 +130,14 @@ public class ModelProviderServiceImpl implements ModelProviderService {
         if (provider.getApiKeyRef() != null) existing.setApiKeyRef(provider.getApiKeyRef());
         if (provider.getBaseUrlRef() != null) existing.setBaseUrlRef(provider.getBaseUrlRef());
 
+        // 队列配置（null = 不更新，"" = 清空回退到全局默认）
+        if (provider.getQueueName() != null) {
+            existing.setQueueName(provider.getQueueName().isBlank() ? null : provider.getQueueName());
+        }
+        if (provider.getQueueConcurrency() != null) existing.setQueueConcurrency(provider.getQueueConcurrency());
+        if (provider.getQueuePrefetch() != null) existing.setQueuePrefetch(provider.getQueuePrefetch());
+        if (provider.getQueueMaxLength() != null) existing.setQueueMaxLength(provider.getQueueMaxLength());
+
         // 将布尔模式标志合并到 supportedModes JSONB 列
         if (provider.getSupportsBlocking() != null || provider.getSupportsStreaming() != null
                 || provider.getSupportsCallback() != null || provider.getSupportsPolling() != null) {
@@ -181,6 +190,8 @@ public class ModelProviderServiceImpl implements ModelProviderService {
         }
 
         configCache.invalidate(existing.getId());
+        // 队列路由缓存失效；下次 Facade.submit 会用新 queue_* 配置 ensureContainer
+        providerQueueRouter.invalidate(existing.getId());
         log.info("Updated model provider: {} ({})", existing.getName(), existing.getId());
         return existing;
     }
