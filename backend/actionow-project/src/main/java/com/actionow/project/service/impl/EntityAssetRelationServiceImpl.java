@@ -366,6 +366,54 @@ public class EntityAssetRelationServiceImpl implements EntityAssetRelationServic
     }
 
     @Override
+    public Map<String, List<EntityAssetRelationResponse>> batchListEntityAssets(
+            List<EntityRef> refs, String workspaceId) {
+        if (refs == null || refs.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        // 用 LambdaQueryWrapper 拼 OR (eq AND eq) 一次性拉取所有 (entityType, entityId) 的关联
+        LambdaQueryWrapper<EntityAssetRelation> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(EntityAssetRelation::getDeleted, CommonConstants.NOT_DELETED);
+        wrapper.and(outer -> {
+            for (int i = 0; i < refs.size(); i++) {
+                EntityRef ref = refs.get(i);
+                if (i == 0) {
+                    outer.and(c -> c
+                            .eq(EntityAssetRelation::getEntityType, ref.getEntityType())
+                            .eq(EntityAssetRelation::getEntityId, ref.getEntityId()));
+                } else {
+                    outer.or(c -> c
+                            .eq(EntityAssetRelation::getEntityType, ref.getEntityType())
+                            .eq(EntityAssetRelation::getEntityId, ref.getEntityId()));
+                }
+            }
+        });
+        List<EntityAssetRelation> relations = entityAssetRelationMapper.selectList(wrapper);
+
+        if (relations.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        // 一次性拉所有 asset 详情
+        List<String> assetIds = relations.stream()
+                .map(EntityAssetRelation::getAssetId)
+                .distinct()
+                .collect(Collectors.toList());
+        Map<String, AssetResponse> assetMap = assetService.batchGet(assetIds).stream()
+                .collect(Collectors.toMap(AssetResponse::getId, Function.identity(), (a, b) -> a));
+
+        // 按 (entityType, entityId) 分组
+        Map<String, List<EntityAssetRelationResponse>> result = new HashMap<>();
+        for (EntityAssetRelation r : relations) {
+            String key = r.getEntityType() + ":" + r.getEntityId();
+            result.computeIfAbsent(key, k -> new ArrayList<>())
+                    .add(EntityAssetRelationResponse.fromEntity(r, assetMap.get(r.getAssetId())));
+        }
+        return result;
+    }
+
+    @Override
     public List<EntityAssetRelationResponse> listByRelationType(String entityType, String entityId, String relationType, String workspaceId) {
         List<EntityAssetRelation> relations = entityAssetRelationMapper.selectByEntityAndRelationType(entityType, entityId, relationType);
 

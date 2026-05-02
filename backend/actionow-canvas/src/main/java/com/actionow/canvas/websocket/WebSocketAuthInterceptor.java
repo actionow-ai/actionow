@@ -1,7 +1,7 @@
 package com.actionow.canvas.websocket;
 
-import com.actionow.canvas.dto.TokenValidateRequest;
-import com.actionow.canvas.dto.TokenValidateResponse;
+import com.actionow.canvas.dto.feign.TokenValidateRequest;
+import com.actionow.canvas.dto.feign.TokenValidateResponse;
 import com.actionow.canvas.feign.UserFeignClient;
 import com.actionow.common.core.result.Result;
 import jakarta.servlet.http.HttpServletRequest;

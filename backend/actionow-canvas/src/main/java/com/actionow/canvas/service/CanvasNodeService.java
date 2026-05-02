@@ -1,10 +1,8 @@
 package com.actionow.canvas.service;
 
-import com.actionow.canvas.dto.node.CanvasNodeResponse;
-import com.actionow.canvas.dto.node.CreateNodeRequest;
-import com.actionow.canvas.dto.node.UpdateNodeRequest;
-import com.actionow.canvas.dto.node.UpdateNodeWithEntityRequest;
+import com.actionow.canvas.dto.node.*;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -13,6 +11,21 @@ import java.util.List;
  * @author Actionow
  */
 public interface CanvasNodeService {
+
+    /**
+     * 视口查询（性能优化）
+     */
+    List<CanvasNodeResponse> getNodesByViewport(String canvasId, ViewportQueryRequest request);
+
+    /**
+     * 创建分组
+     */
+    CanvasNodeResponse createGroup(CreateGroupRequest request, String workspaceId, String userId);
+
+    /**
+     * 整组移动
+     */
+    void moveGroup(String groupId, BigDecimal deltaX, BigDecimal deltaY);
 
     /**
      * 创建节点
@@ -94,4 +107,14 @@ public interface CanvasNodeService {
      * 更新节点缓存信息
      */
     void updateCachedInfo(String entityType, String entityId, String name, String thumbnailUrl);
+
+    /**
+     * 批量更新节点
+     */
+    void batchUpdate(BatchUpdateRequest request, String userId);
+
+    /**
+     * 批量删除节点
+     */
+    void batchDelete(List<String> nodeIds, String userId);
 }

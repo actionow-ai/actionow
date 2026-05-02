@@ -1,7 +1,7 @@
 package com.actionow.canvas.feign;
 
-import com.actionow.canvas.dto.TokenValidateRequest;
-import com.actionow.canvas.dto.TokenValidateResponse;
+import com.actionow.canvas.dto.feign.TokenValidateRequest;
+import com.actionow.canvas.dto.feign.TokenValidateResponse;
 import com.actionow.common.core.result.Result;
 import com.actionow.common.core.result.ResultCode;
 import lombok.extern.slf4j.Slf4j;

@@ -1,4 +1,4 @@
-package com.actionow.canvas.dto;
+package com.actionow.canvas.dto.feign;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;

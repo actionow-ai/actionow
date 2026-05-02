@@ -1,6 +1,6 @@
 package com.actionow.canvas.service;
 
-import com.actionow.canvas.dto.EntityInfo;
+import com.actionow.canvas.dto.feign.EntityInfo;
 import com.actionow.canvas.feign.ProjectFeignClient;
 import com.actionow.common.core.result.Result;
 import com.fasterxml.jackson.core.JsonProcessingException;

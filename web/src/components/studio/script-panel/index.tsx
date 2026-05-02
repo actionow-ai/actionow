@@ -6,8 +6,10 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
-import { Card, Tabs } from "@heroui/react";
-import { useTranslations } from "next-intl";
+import { Button, Card, Tabs, toast } from "@heroui/react";
+import { Layers } from "lucide-react";
+import { useLocale, useTranslations } from "next-intl";
+import { useRouter } from "next/navigation";
 
 import type { ScriptPanelProps, TabKey } from "./types";
 import { TABS, TAB_I18N_KEYS } from "./constants";
@@ -15,6 +17,8 @@ import { getScriptActiveTab, setScriptActiveTab } from "@/lib/stores/preferences
 import { useCollaboration } from "./hooks/use-collaboration";
 import { useStoryboardEpisode } from "./hooks/use-storyboard-episode-store";
 import { OnlineUsers } from "./components";
+import { canvasService } from "@/lib/api/services/canvas.service";
+import { getErrorFromException } from "@/lib/api";
 
 // Import tabs - these will be lazy loaded in the future
 import { ScriptDetailsTab } from "./tabs/script-details-tab";
@@ -28,11 +32,25 @@ import { EntityTab } from "./tabs/entity-tab";
 
 export function ScriptPanel({ scriptId }: ScriptPanelProps) {
   const [activeTab, setActiveTab] = useState<TabKey>(() => getScriptActiveTab(scriptId));
+  const [openingCanvas, setOpeningCanvas] = useState(false);
   const t = useTranslations("workspace.studio");
+  const locale = useLocale();
+  const router = useRouter();
 
   // Collaboration hook
   const { users, connected } = useCollaboration(scriptId, activeTab);
   const storyboardEpisode = useStoryboardEpisode(scriptId);
+
+  const handleOpenCanvas = useCallback(async () => {
+    setOpeningCanvas(true);
+    try {
+      const canvas = await canvasService.getOrCreateByScriptId(scriptId);
+      router.push(`/${locale}/workspace/canvas/${canvas.id}`);
+    } catch (error) {
+      toast.danger(getErrorFromException(error, locale));
+      setOpeningCanvas(false);
+    }
+  }, [locale, router, scriptId]);
 
   // Update active tab when scriptId changes
   useEffect(() => {
@@ -101,10 +119,19 @@ export function ScriptPanel({ scriptId }: ScriptPanelProps) {
           </Tabs.ListContainer>
         </Tabs>
 
-        {/* Right: Online Users */}
-        {connected && users.length > 0 && (
-          <OnlineUsers users={users} />
-        )}
+        {/* Right: Open Canvas + Online Users */}
+        <div className="flex shrink-0 items-center gap-2 pr-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            onPress={handleOpenCanvas}
+            isPending={openingCanvas}
+          >
+            <Layers className="size-4" />
+            {t("openCanvas")}
+          </Button>
+          {connected && users.length > 0 && <OnlineUsers users={users} />}
+        </div>
       </div>
 
       {/* Content */}

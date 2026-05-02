@@ -17,6 +17,11 @@ import java.util.Map;
 public interface CanvasService {
 
     /**
+     * 获取工作空间的画布列表
+     */
+    List<CanvasResponse> listByWorkspace(String workspaceId);
+
+    /**
      * 创建画布（与剧本1:1关联）
      */
     CanvasResponse createCanvas(CreateCanvasRequest request, String workspaceId, String userId);

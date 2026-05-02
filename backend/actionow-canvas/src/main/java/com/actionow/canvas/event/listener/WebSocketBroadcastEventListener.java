@@ -4,6 +4,7 @@ import com.actionow.canvas.entity.Canvas;
 import com.actionow.canvas.entity.CanvasEdge;
 import com.actionow.canvas.entity.CanvasNode;
 import com.actionow.canvas.event.*;
+import com.actionow.canvas.mapper.CanvasNodeMapper;
 import com.actionow.canvas.websocket.CanvasWebSocketHandler;
 import com.actionow.canvas.websocket.CanvasWebSocketMessage;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +39,7 @@ import java.util.Map;
 public class WebSocketBroadcastEventListener {
 
     private final CanvasWebSocketHandler webSocketHandler;
+    private final CanvasNodeMapper nodeMapper;
 
     /**
      * 节点创建事件 - 广播给其他用户（排除操作者）
@@ -245,9 +247,12 @@ public class WebSocketBroadcastEventListener {
         data.put("id", node.getId());
         data.put("workspaceId", node.getWorkspaceId());
         data.put("canvasId", node.getCanvasId());
+        data.put("nodeType", node.getNodeType());
         data.put("entityType", node.getEntityType());
         data.put("entityId", node.getEntityId());
-        data.put("entityVersionId", node.getEntityVersionId());
+        data.put("layer", node.getLayer());
+        data.put("parentNodeId", node.getParentNodeId());
+        data.put("content", node.getContent());
         data.put("positionX", node.getPositionX());
         data.put("positionY", node.getPositionY());
         data.put("width", node.getWidth());
@@ -256,15 +261,10 @@ public class WebSocketBroadcastEventListener {
         data.put("locked", node.getLocked());
         data.put("zIndex", node.getZIndex());
         data.put("style", node.getStyle() != null ? node.getStyle() : new HashMap<>());
-        // entityDetail 通过缓存字段简化提供（完整详情需调用 full 接口）
-        if (node.getCachedName() != null || node.getCachedThumbnailUrl() != null) {
-            Map<String, Object> entityDetail = new HashMap<>();
-            entityDetail.put("name", node.getCachedName());
-            entityDetail.put("coverUrl", node.getCachedThumbnailUrl());
-            data.put("entityDetail", entityDetail);
-        }
         data.put("createdAt", node.getCreatedAt());
         data.put("updatedAt", node.getUpdatedAt());
+        // 注意：不带 entityDetail（避免 broadcast 时阻塞 Feign 调用）。
+        // 前端 upsert 时若 incoming.entityDetail 为空，保留本地缓存。
         return data;
     }
 
@@ -289,7 +289,21 @@ public class WebSocketBroadcastEventListener {
         data.put("extraInfo", edge.getExtraInfo() != null ? edge.getExtraInfo() : new HashMap<>());
         data.put("createdAt", edge.getCreatedAt());
         data.put("updatedAt", edge.getUpdatedAt());
+        // 反查 nodeId 让前端 React Flow 能直接渲染（不依赖前端再做反查）
+        data.put("sourceNodeId", lookupNodeId(edge.getCanvasId(), edge.getSourceType(), edge.getSourceId()));
+        data.put("targetNodeId", lookupNodeId(edge.getCanvasId(), edge.getTargetType(), edge.getTargetId()));
         return data;
+    }
+
+    private String lookupNodeId(String canvasId, String entityType, String entityId) {
+        if (canvasId == null || entityType == null || entityId == null) return null;
+        try {
+            CanvasNode node = nodeMapper.selectByCanvasAndEntity(canvasId, entityType, entityId);
+            return node != null ? node.getId() : null;
+        } catch (Exception e) {
+            log.warn("ws 反查节点ID失败: canvasId={}, entityType={}, entityId={}", canvasId, entityType, entityId);
+            return null;
+        }
     }
 
     private Map<String, Object> buildCanvasData(Canvas canvas) {

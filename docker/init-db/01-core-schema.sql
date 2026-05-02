@@ -2355,10 +2355,12 @@ BEGIN
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         workspace_id UUID NOT NULL,
         canvas_id UUID NOT NULL,
-        entity_type VARCHAR(50) NOT NULL,
-        entity_id UUID NOT NULL,
+        node_type VARCHAR(50) DEFAULT ''ENTITY'',
+        entity_type VARCHAR(50),
+        entity_id UUID,
         entity_version_id UUID,
-        layer VARCHAR(50) NOT NULL,
+        content JSONB,
+        layer VARCHAR(50),
         parent_node_id UUID,
         position_x DECIMAL(10,2) DEFAULT 0,
         position_y DECIMAL(10,2) DEFAULT 0,
@@ -2378,12 +2380,13 @@ BEGIN
         created_by UUID,
         updated_by UUID,
         deleted INTEGER NOT NULL DEFAULT 0,
-        deleted_at TIMESTAMPTZ,
-        UNIQUE (canvas_id, entity_type, entity_id)
+        deleted_at TIMESTAMPTZ
     )', p_schema_name);
 
     -- 添加画布节点表注释
     EXECUTE format('COMMENT ON TABLE %I.t_canvas_node IS ''画布节点表 - 存储节点位置和样式''', p_schema_name);
+    EXECUTE format('COMMENT ON COLUMN %I.t_canvas_node.node_type IS ''节点类型: ENTITY(业务实体) / STICKY_NOTE / IFRAME / SHAPE / GROUP''', p_schema_name);
+    EXECUTE format('COMMENT ON COLUMN %I.t_canvas_node.content IS ''freeform 节点内容(JSON)，仅 nodeType != ENTITY 时使用''', p_schema_name);
     EXECUTE format('COMMENT ON COLUMN %I.t_canvas_node.layer IS ''节点层级: SCRIPT, EPISODE, STORYBOARD, CHARACTER, SCENE, PROP, ASSET''', p_schema_name);
     EXECUTE format('COMMENT ON COLUMN %I.t_canvas_node.parent_node_id IS ''父节点ID，用于层级关系''', p_schema_name);
     EXECUTE format('COMMENT ON COLUMN %I.t_canvas_node.hidden IS ''节点是否隐藏''', p_schema_name);

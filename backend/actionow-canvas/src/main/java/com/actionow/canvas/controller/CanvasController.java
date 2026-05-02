@@ -1,8 +1,11 @@
 package com.actionow.canvas.controller;
 
 import com.actionow.canvas.dto.canvas.*;
+import com.actionow.canvas.dto.node.CanvasNodeResponse;
+import com.actionow.canvas.dto.node.ViewportQueryRequest;
 import com.actionow.canvas.dto.view.ViewDataRequest;
 import com.actionow.canvas.dto.view.ViewDataResponse;
+import com.actionow.canvas.service.CanvasNodeService;
 import com.actionow.canvas.service.CanvasService;
 import com.actionow.common.core.context.UserContextHolder;
 import com.actionow.common.core.result.Result;
@@ -12,6 +15,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -27,6 +31,18 @@ import java.util.Map;
 public class CanvasController {
 
     private final CanvasService canvasService;
+    private final CanvasNodeService canvasNodeService;
+
+    /**
+     * 获取工作空间的画布列表
+     */
+    @GetMapping
+    @RequireWorkspaceMember
+    public Result<java.util.List<CanvasResponse>> listCanvases() {
+        String workspaceId = UserContextHolder.getWorkspaceId();
+        java.util.List<CanvasResponse> canvases = canvasService.listByWorkspace(workspaceId);
+        return Result.success(canvases);
+    }
 
     /**
      * 创建画布
@@ -75,6 +91,26 @@ public class CanvasController {
     /**
      * 获取画布完整信息（包含所有节点和边）
      */
+    /**
+     * 获取画布中的所有节点
+     */
+    @GetMapping("/{canvasId}/nodes")
+    @RequireWorkspaceMember
+    public Result<List<CanvasNodeResponse>> listNodesByCanvasId(@PathVariable String canvasId) {
+        return Result.success(canvasNodeService.listByCanvasId(canvasId));
+    }
+
+    /**
+     * 视口查询（性能优化），仅返回指定视口范围内的节点
+     */
+    @PostMapping("/{canvasId}/nodes/viewport")
+    @RequireWorkspaceMember
+    public Result<List<CanvasNodeResponse>> getNodesByViewport(
+            @PathVariable String canvasId,
+            @RequestBody @Valid ViewportQueryRequest request) {
+        return Result.success(canvasNodeService.getNodesByViewport(canvasId, request));
+    }
+
     @GetMapping("/{canvasId}/full")
     @RequireWorkspaceMember
     public Result<CanvasFullResponse> getCanvasFull(@PathVariable String canvasId) {

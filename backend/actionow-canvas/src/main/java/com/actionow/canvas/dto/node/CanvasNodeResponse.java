@@ -25,7 +25,6 @@ public class CanvasNodeResponse {
     // 实体引用
     private String entityType;
     private String entityId;
-    private String entityVersionId;
 
     // 层级信息
     private String layer;
@@ -40,9 +39,7 @@ public class CanvasNodeResponse {
     // 状态
     private Boolean collapsed;
     private Boolean locked;
-    private Boolean hidden;
     private Integer zIndex;
-    private String cachedStatus;
 
     // 样式
     private Map<String, Object> style;
@@ -69,7 +66,6 @@ public class CanvasNodeResponse {
         response.setCanvasId(node.getCanvasId());
         response.setEntityType(node.getEntityType());
         response.setEntityId(node.getEntityId());
-        response.setEntityVersionId(node.getEntityVersionId());
         response.setLayer(node.getLayer());
         response.setParentNodeId(node.getParentNodeId());
         response.setPositionX(node.getPositionX());
@@ -78,9 +74,7 @@ public class CanvasNodeResponse {
         response.setHeight(node.getHeight());
         response.setCollapsed(node.getCollapsed());
         response.setLocked(node.getLocked());
-        response.setHidden(node.getHidden());
         response.setZIndex(node.getZIndex());
-        response.setCachedStatus(node.getCachedStatus());
         response.setStyle(node.getStyle());
         response.setCreatedAt(node.getCreatedAt());
         response.setUpdatedAt(node.getUpdatedAt());

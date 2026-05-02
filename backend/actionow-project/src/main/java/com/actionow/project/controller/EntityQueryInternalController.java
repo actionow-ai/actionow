@@ -459,6 +459,26 @@ public class EntityQueryInternalController {
     }
 
     /**
+     * 批量查询多个实体的关联素材
+     * Canvas 模块画布渲染时一次性 enrich N 个节点，替代 N 次单条查询。
+     *
+     * @param workspaceId 工作空间ID
+     * @param refs        实体引用列表（[{entityType, entityId}, ...]）
+     * @return key 格式 "{entityType}:{entityId}" → 关联素材列表
+     */
+    @PostMapping("/entity-assets/batch-get")
+    public Result<java.util.Map<String, List<EntityAssetRelationResponse>>> batchGetEntityAssets(
+            @RequestHeader("X-Workspace-Id") String workspaceId,
+            @RequestBody List<com.actionow.project.dto.relation.EntityRef> refs) {
+
+        log.info("批量查询实体关联素材: workspaceId={}, count={}",
+                workspaceId, refs != null ? refs.size() : 0);
+
+        return Result.success(
+                entityAssetRelationService.batchListEntityAssets(refs, workspaceId));
+    }
+
+    /**
      * 根据关联类型查询实体关联的素材
      *
      * @param workspaceId  工作空间ID

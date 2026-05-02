@@ -414,6 +414,7 @@
       "title": "片场",
       "empty": "暂无内容",
       "scriptPanel": "剧本管理",
+      "openCanvas": "打开画布",
       "tabs": {
         "details": "详情",
         "episodes": "剧集",

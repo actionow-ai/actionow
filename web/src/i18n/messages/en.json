@@ -414,6 +414,7 @@
       "title": "Studio",
       "empty": "No content yet",
       "scriptPanel": "Script Management",
+      "openCanvas": "Open Canvas",
       "tabs": {
         "details": "Details",
         "episodes": "Episodes",

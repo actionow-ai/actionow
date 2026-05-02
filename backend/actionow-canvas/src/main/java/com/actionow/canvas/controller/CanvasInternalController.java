@@ -48,47 +48,37 @@ public class CanvasInternalController {
 
         log.info("初始化剧本画布: scriptId={}, workspaceId={}", scriptId, workspaceId);
 
-        try {
-            // 获取或创建画布（会自动初始化预设视图）
-            CanvasResponse canvas = canvasService.getOrCreateByScriptId(scriptId, workspaceId, null);
+        CanvasResponse canvas = canvasService.getOrCreateByScriptId(scriptId, workspaceId, null);
 
-            // 检查是否已存在剧本节点
-            var existingNodes = nodeService.listByEntity(CanvasConstants.EntityType.SCRIPT, scriptId);
-            boolean hasScriptNode = existingNodes.stream()
-                    .anyMatch(node -> canvas.getId().equals(node.getCanvasId()));
+        var existingNodes = nodeService.listByEntity(CanvasConstants.EntityType.SCRIPT, scriptId);
+        boolean hasScriptNode = existingNodes.stream()
+                .anyMatch(node -> canvas.getId().equals(node.getCanvasId()));
 
-            if (!hasScriptNode) {
-                // 创建默认剧本节点（放在画布中心位置）
-                CreateNodeRequest nodeRequest = new CreateNodeRequest();
-                nodeRequest.setCanvasId(canvas.getId());
-                nodeRequest.setEntityType(CanvasConstants.EntityType.SCRIPT);
-                nodeRequest.setEntityId(scriptId);
-                nodeRequest.setLayer(CanvasConstants.Layer.SCRIPT);
-                nodeRequest.setPositionX(BigDecimal.valueOf(300));
-                nodeRequest.setPositionY(BigDecimal.valueOf(100));
-                nodeRequest.setWidth(BigDecimal.valueOf(CanvasConstants.LayoutDefaults.NODE_WIDTH));
-                nodeRequest.setHeight(BigDecimal.valueOf(CanvasConstants.LayoutDefaults.NODE_HEIGHT));
-                nodeRequest.setCollapsed(false);
-                nodeRequest.setLocked(false);
-                nodeRequest.setZIndex(0);
+        if (!hasScriptNode) {
+            CreateNodeRequest nodeRequest = new CreateNodeRequest();
+            nodeRequest.setCanvasId(canvas.getId());
+            nodeRequest.setEntityType(CanvasConstants.EntityType.SCRIPT);
+            nodeRequest.setEntityId(scriptId);
+            nodeRequest.setLayer(CanvasConstants.Layer.SCRIPT);
+            nodeRequest.setPositionX(BigDecimal.valueOf(300));
+            nodeRequest.setPositionY(BigDecimal.valueOf(100));
+            nodeRequest.setWidth(BigDecimal.valueOf(CanvasConstants.LayoutDefaults.NODE_WIDTH));
+            nodeRequest.setHeight(BigDecimal.valueOf(CanvasConstants.LayoutDefaults.NODE_HEIGHT));
+            nodeRequest.setCollapsed(false);
+            nodeRequest.setLocked(false);
+            nodeRequest.setZIndex(0);
 
-                CanvasNodeResponse node = nodeService.createNode(nodeRequest, workspaceId, null);
+            CanvasNodeResponse node = nodeService.createNode(nodeRequest, workspaceId, null);
 
-                // 更新缓存名称
-                if (scriptName != null && !scriptName.isEmpty()) {
-                    nodeService.updateCachedInfo(CanvasConstants.EntityType.SCRIPT, scriptId, scriptName, null);
-                }
-
-                log.info("剧本节点创建成功: canvasId={}, nodeId={}, scriptId={}",
-                        canvas.getId(), node.getId(), scriptId);
+            if (scriptName != null && !scriptName.isEmpty()) {
+                nodeService.updateCachedInfo(CanvasConstants.EntityType.SCRIPT, scriptId, scriptName, null);
             }
 
-            return Result.success(canvas);
-
-        } catch (Exception e) {
-            log.error("初始化剧本画布失败: scriptId={}, error={}", scriptId, e.getMessage(), e);
-            return Result.fail("初始化画布失败: " + e.getMessage());
+            log.info("剧本节点创建成功: canvasId={}, nodeId={}, scriptId={}",
+                    canvas.getId(), node.getId(), scriptId);
         }
+
+        return Result.success(canvas);
     }
 
     /**

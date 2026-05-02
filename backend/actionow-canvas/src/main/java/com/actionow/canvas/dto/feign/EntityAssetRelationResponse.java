@@ -1,4 +1,4 @@
-package com.actionow.canvas.dto;
+package com.actionow.canvas.dto.feign;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -58,6 +58,12 @@ public class EntityAssetRelationResponse {
      * 扩展信息
      */
     private Map<String, Object> extraInfo;
+
+    /**
+     * 关联的素材详情快照（含 name / coverUrl / status 等渲染所需字段）
+     * Project 侧 EntityAssetRelationResponse.asset 透传过来
+     */
+    private Map<String, Object> asset;
 
     /**
      * 创建时间

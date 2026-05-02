@@ -1,7 +1,6 @@
 package com.actionow.canvas.service.impl;
 
 import com.actionow.canvas.constant.CanvasConstants;
-import com.actionow.canvas.dto.EntityChangeMessage;
 import com.actionow.canvas.dto.canvas.CanvasResponse;
 import com.actionow.canvas.dto.edge.CreateEdgeRequest;
 import com.actionow.canvas.dto.node.CreateNodeRequest;
@@ -16,7 +15,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
-import java.util.List;
 
 /**
  * Canvas 同步服务实现
@@ -45,46 +43,27 @@ public class CanvasSyncServiceImpl implements CanvasSyncService {
     public void handleEntityCreated(String entityType, String entityId, String scriptId,
                                     String parentEntityType, String parentEntityId,
                                     String workspaceId, String name) {
-        handleEntityCreated(entityType, entityId, scriptId, parentEntityType, parentEntityId,
-                workspaceId, name, null);
-    }
+        String dedupKey = String.format("CREATED:%s:%s:%s", entityType, entityId, scriptId);
 
-    @Override
-    public void handleEntityCreated(String entityType, String entityId, String scriptId,
-                                    String parentEntityType, String parentEntityId,
-                                    String workspaceId, String name,
-                                    List<EntityChangeMessage.RelatedEntity> relatedEntities) {
-        // 生成去重键 - 包含 relatedEntities 的标识，区分带关联实体的消息
-        String relatedKey = relatedEntities != null && !relatedEntities.isEmpty()
-                ? ":related=" + relatedEntities.size()
-                : "";
-        String dedupKey = String.format("CREATED:%s:%s:%s%s", entityType, entityId, scriptId, relatedKey);
-
-        // 清理过期的缓存条目
         cleanExpiredEntries();
 
-        // 检查是否最近已处理过
         Long lastProcessed = processedMessages.get(dedupKey);
         if (lastProcessed != null) {
             log.debug("跳过重复消息: dedupKey={}, lastProcessedMs={}", dedupKey, System.currentTimeMillis() - lastProcessed);
             return;
         }
 
-        // 标记为已处理
         processedMessages.put(dedupKey, System.currentTimeMillis());
 
-        log.info("处理实体创建事件: entityType={}, entityId={}, scriptId={}, parentType={}, parentId={}, relatedEntities={}",
-                entityType, entityId, scriptId, parentEntityType, parentEntityId,
-                relatedEntities != null ? relatedEntities.size() : 0);
+        log.info("处理实体创建事件: entityType={}, entityId={}, scriptId={}, parentType={}, parentId={}",
+                entityType, entityId, scriptId, parentEntityType, parentEntityId);
 
         try {
-            // 特殊处理：Script 实体创建时，创建画布本身
             if (CanvasConstants.EntityType.SCRIPT.equals(entityType)) {
                 handleScriptCreated(entityId, workspaceId, name);
                 return;
             }
 
-            // 其他实体：获取或创建对应的画布
             if (!StringUtils.hasText(scriptId)) {
                 log.warn("scriptId 为空，无法创建节点: entityType={}, entityId={}", entityType, entityId);
                 return;
@@ -92,13 +71,11 @@ public class CanvasSyncServiceImpl implements CanvasSyncService {
 
             CanvasResponse canvas = canvasService.getOrCreateByScriptId(scriptId, workspaceId, null);
 
-            // 检查节点是否已存在
             var existingNodes = nodeService.listByEntity(entityType, entityId);
             boolean nodeExistsInCanvas = existingNodes.stream()
                     .anyMatch(node -> canvas.getId().equals(node.getCanvasId()));
 
             if (!nodeExistsInCanvas) {
-                // 节点不存在，创建节点
                 createEntityNode(canvas, entityType, entityId, parentEntityType, parentEntityId,
                         workspaceId, name);
             } else {
@@ -106,16 +83,9 @@ public class CanvasSyncServiceImpl implements CanvasSyncService {
                         canvas.getId(), entityType, entityId);
             }
 
-            // 处理父实体边（无论节点是否已存在）
             if (StringUtils.hasText(parentEntityType) && StringUtils.hasText(parentEntityId)) {
                 createEdgeToParent(canvas.getId(), parentEntityType, parentEntityId,
                         entityType, entityId, workspaceId);
-            }
-
-            // 处理额外的关联实体边（无论节点是否已存在）
-            if (relatedEntities != null && !relatedEntities.isEmpty()) {
-                createEdgesToRelatedEntities(canvas.getId(), entityType, entityId,
-                        relatedEntities, workspaceId);
             }
 
         } catch (Exception e) {
@@ -233,57 +203,6 @@ public class CanvasSyncServiceImpl implements CanvasSyncService {
         } catch (Exception e) {
             log.warn("自动创建层级边失败（忽略）: {}[{}] -> {}[{}], error={}",
                     parentType, parentId, entityType, entityId, e.getMessage());
-        }
-    }
-
-    /**
-     * 创建到关联实体的边
-     */
-    private void createEdgesToRelatedEntities(String canvasId, String entityType, String entityId,
-                                               List<EntityChangeMessage.RelatedEntity> relatedEntities,
-                                               String workspaceId) {
-        for (EntityChangeMessage.RelatedEntity related : relatedEntities) {
-            try {
-                String relatedType = related.getEntityType();
-                String relatedId = related.getEntityId();
-
-                if (relatedType == null || relatedId == null) {
-                    log.warn("关联实体信息不完整，跳过: entityType={}, entityId={}", relatedType, relatedId);
-                    continue;
-                }
-
-                // 确保关联实体节点存在
-                ensureEntityNodeExists(canvasId, relatedType, relatedId, workspaceId);
-
-                // 验证边是否允许
-                if (!edgeService.validateEdge(canvasId, relatedType, relatedId, entityType, entityId)) {
-                    log.debug("边规则不允许: {}[{}] -> {}[{}]",
-                            relatedType, relatedId, entityType, entityId);
-                    continue;
-                }
-
-                // 创建边请求
-                CreateEdgeRequest edgeRequest = new CreateEdgeRequest();
-                edgeRequest.setCanvasId(canvasId);
-                edgeRequest.setSourceType(relatedType);
-                edgeRequest.setSourceId(relatedId);
-                edgeRequest.setSourceHandle(CanvasConstants.HandlePosition.RIGHT);
-                edgeRequest.setTargetType(entityType);
-                edgeRequest.setTargetId(entityId);
-                edgeRequest.setTargetHandle(CanvasConstants.HandlePosition.LEFT);
-                if (related.getRelationType() != null && !related.getRelationType().isEmpty()) {
-                    edgeRequest.setRelationType(related.getRelationType());
-                }
-
-                edgeService.createEdge(edgeRequest, workspaceId, null);
-
-                log.info("自动创建关联边成功: canvasId={}, {}[{}] -> {}[{}]",
-                        canvasId, relatedType, relatedId, entityType, entityId);
-
-            } catch (Exception e) {
-                log.warn("自动创建关联边失败（忽略）: relatedType={}, relatedId={}, error={}",
-                        related.getEntityType(), related.getEntityId(), e.getMessage());
-            }
         }
     }
 

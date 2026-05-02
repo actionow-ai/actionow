@@ -6,12 +6,14 @@ import com.actionow.canvas.dto.edge.CreateEdgeRequest;
 import com.actionow.canvas.dto.edge.UpdateEdgeRequest;
 import com.actionow.canvas.entity.Canvas;
 import com.actionow.canvas.entity.CanvasEdge;
+import com.actionow.canvas.entity.CanvasNode;
 import com.actionow.canvas.event.CanvasEventPublisher;
 import com.actionow.canvas.event.EdgeCreatedEvent;
 import com.actionow.canvas.event.EdgeDeletedEvent;
 import com.actionow.canvas.event.EdgeUpdatedEvent;
 import com.actionow.canvas.mapper.CanvasEdgeMapper;
 import com.actionow.canvas.mapper.CanvasMapper;
+import com.actionow.canvas.mapper.CanvasNodeMapper;
 import com.actionow.canvas.service.CanvasEdgeService;
 import com.actionow.common.core.exception.BusinessException;
 import com.actionow.common.core.id.UuidGenerator;
@@ -40,6 +42,7 @@ public class CanvasEdgeServiceImpl implements CanvasEdgeService {
 
     private final CanvasEdgeMapper edgeMapper;
     private final CanvasMapper canvasMapper;
+    private final CanvasNodeMapper nodeMapper;
     private final CanvasEventPublisher eventPublisher;
 
     @Override
@@ -271,7 +274,22 @@ public class CanvasEdgeServiceImpl implements CanvasEdgeService {
         response.setExtraInfo(edge.getExtraInfo());
         response.setCreatedAt(edge.getCreatedAt());
         response.setUpdatedAt(edge.getUpdatedAt());
+        // 通过 (canvasId, entityType, entityId) 反查 nodeId 填给前端 React Flow 渲染
+        response.setSourceNodeId(lookupNodeId(edge.getCanvasId(), edge.getSourceType(), edge.getSourceId()));
+        response.setTargetNodeId(lookupNodeId(edge.getCanvasId(), edge.getTargetType(), edge.getTargetId()));
         return response;
+    }
+
+    private String lookupNodeId(String canvasId, String entityType, String entityId) {
+        if (canvasId == null || entityType == null || entityId == null) return null;
+        try {
+            CanvasNode node = nodeMapper.selectByCanvasAndEntity(canvasId, entityType, entityId);
+            return node != null ? node.getId() : null;
+        } catch (Exception e) {
+            log.warn("反查节点ID失败: canvasId={}, entityType={}, entityId={}, error={}",
+                    canvasId, entityType, entityId, e.getMessage());
+            return null;
+        }
     }
 
     /**

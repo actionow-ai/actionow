@@ -2,17 +2,14 @@ package com.actionow.canvas.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.actionow.canvas.constant.CanvasConstants;
-import com.actionow.canvas.dto.CanvasEntityCreateRequest;
-import com.actionow.canvas.dto.CanvasEntityCreateResponse;
-import com.actionow.canvas.dto.CanvasEntityUpdateRequest;
-import com.actionow.canvas.dto.CanvasEntityUpdateResponse;
-import com.actionow.canvas.dto.CreateEntityAssetRelationRequest;
+import com.actionow.canvas.dto.feign.CanvasEntityCreateRequest;
+import com.actionow.canvas.dto.feign.CanvasEntityCreateResponse;
+import com.actionow.canvas.dto.feign.CanvasEntityUpdateRequest;
+import com.actionow.canvas.dto.feign.CanvasEntityUpdateResponse;
+import com.actionow.canvas.dto.feign.CreateEntityAssetRelationRequest;
 import com.actionow.canvas.dto.edge.CanvasEdgeResponse;
 import com.actionow.canvas.dto.edge.CreateEdgeRequest;
-import com.actionow.canvas.dto.node.CanvasNodeResponse;
-import com.actionow.canvas.dto.node.CreateNodeRequest;
-import com.actionow.canvas.dto.node.UpdateNodeRequest;
-import com.actionow.canvas.dto.node.UpdateNodeWithEntityRequest;
+import com.actionow.canvas.dto.node.*;
 import com.actionow.canvas.entity.Canvas;
 import com.actionow.canvas.entity.CanvasNode;
 import com.actionow.canvas.event.BatchNodesUpdatedEvent;
@@ -25,6 +22,8 @@ import com.actionow.canvas.mapper.CanvasMapper;
 import com.actionow.canvas.mapper.CanvasNodeMapper;
 import com.actionow.canvas.service.CanvasEdgeService;
 import com.actionow.canvas.service.CanvasNodeService;
+import com.actionow.canvas.service.NodeEnrichmentService;
+import com.actionow.canvas.history.OperationHistoryService;
 import com.actionow.common.core.constant.CommonConstants;
 import com.actionow.common.core.exception.BusinessException;
 import com.actionow.common.core.id.UuidGenerator;
@@ -41,6 +40,7 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -59,6 +59,66 @@ public class CanvasNodeServiceImpl implements CanvasNodeService {
     private final CanvasEventPublisher eventPublisher;
     @Lazy
     private final CanvasEdgeService edgeService;
+    private final OperationHistoryService historyService;
+    private final NodeEnrichmentService nodeEnrichmentService;
+
+    @Override
+    public List<CanvasNodeResponse> getNodesByViewport(String canvasId, ViewportQueryRequest request) {
+        List<CanvasNode> nodes = nodeMapper.selectByViewport(
+                canvasId,
+                request.getMinX(), request.getMinY(),
+                request.getMaxX(), request.getMaxY(),
+                request.getLimit()
+        );
+        return nodes.stream()
+                .map(CanvasNodeResponse::fromEntity)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public CanvasNodeResponse createGroup(CreateGroupRequest request, String workspaceId, String userId) {
+        CreateNodeRequest nodeRequest = new CreateNodeRequest();
+        nodeRequest.setCanvasId(request.getCanvasId());
+        nodeRequest.setNodeType("GROUP");
+        nodeRequest.setContent(new HashMap<>(Map.of("title", request.getTitle() != null ? request.getTitle() : "分组")));
+        nodeRequest.setPositionX(request.getPositionX() != null ? request.getPositionX() : BigDecimal.ZERO);
+        nodeRequest.setPositionY(request.getPositionY() != null ? request.getPositionY() : BigDecimal.ZERO);
+
+        CanvasNodeResponse group = createNode(nodeRequest, workspaceId, userId);
+
+        if (request.getNodeIds() != null && !request.getNodeIds().isEmpty()) {
+            for (String nodeId : request.getNodeIds()) {
+                CanvasNode node = nodeMapper.selectById(nodeId);
+                if (node != null) {
+                    node.setParentNodeId(group.getId());
+                    nodeMapper.updateById(node);
+                }
+            }
+        }
+
+        return group;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void moveGroup(String groupId, BigDecimal deltaX, BigDecimal deltaY) {
+        CanvasNode group = nodeMapper.selectById(groupId);
+        if (group == null || !"GROUP".equals(group.getNodeType())) {
+            throw new BusinessException(ResultCode.NOT_FOUND, "分组不存在");
+        }
+
+        group.setPositionX(group.getPositionX().add(deltaX));
+        group.setPositionY(group.getPositionY().add(deltaY));
+        nodeMapper.updateById(group);
+
+        List<CanvasNode> children = nodeMapper.selectByParentNodeId(groupId);
+        for (CanvasNode child : children) {
+            child.setPositionX(child.getPositionX().add(deltaX));
+            child.setPositionY(child.getPositionY().add(deltaY));
+            nodeMapper.updateById(child);
+        }
+    }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -71,10 +131,9 @@ public class CanvasNodeServiceImpl implements CanvasNodeService {
 
         // 处理实体ID：如果未提供，需要先创建实体
         String entityId = request.getEntityId();
-        String cachedName = null;
-        String cachedThumbnailUrl = null;
+        boolean isGroupNode = "GROUP".equals(request.getNodeType());
 
-        if (!StringUtils.hasText(entityId)) {
+        if (!StringUtils.hasText(entityId) && !isGroupNode) {
             // 新建实体模式：需要提供 entityName
             if (!StringUtils.hasText(request.getEntityName())) {
                 throw new BusinessException(ResultCode.PARAM_INVALID, "entityId 或 entityName 必须提供其一");
@@ -83,11 +142,9 @@ public class CanvasNodeServiceImpl implements CanvasNodeService {
             // 调用 Project 服务创建实体
             CanvasEntityCreateResponse createdEntity = createEntityInProject(request, workspaceId, canvas);
             entityId = createdEntity.getEntityId();
-            cachedName = createdEntity.getName();
-            cachedThumbnailUrl = createdEntity.getThumbnailUrl();
 
             log.info("Canvas 新建实体模式: 已创建实体 entityType={}, entityId={}, name={}",
-                    request.getEntityType(), entityId, cachedName);
+                    request.getEntityType(), entityId, createdEntity.getName());
         }
 
         // 检查是否已存在节点
@@ -111,9 +168,10 @@ public class CanvasNodeServiceImpl implements CanvasNodeService {
         node.setId(UuidGenerator.generateUuidV7());
         node.setWorkspaceId(workspaceId);
         node.setCanvasId(request.getCanvasId());
+        node.setNodeType(request.getNodeType() != null ? request.getNodeType() : "ENTITY");
         node.setEntityType(request.getEntityType());
         node.setEntityId(entityId);
-        node.setEntityVersionId(request.getEntityVersionId());
+        node.setContent(request.getContent());
         node.setLayer(layer);
         node.setParentNodeId(request.getParentNodeId());
         node.setPositionX(request.getPositionX());
@@ -124,19 +182,13 @@ public class CanvasNodeServiceImpl implements CanvasNodeService {
                 : BigDecimal.valueOf(CanvasConstants.LayoutDefaults.NODE_HEIGHT));
         node.setCollapsed(request.getCollapsed() != null ? request.getCollapsed() : false);
         node.setLocked(request.getLocked() != null ? request.getLocked() : false);
-        node.setHidden(false);
         node.setZIndex(request.getZIndex() != null ? request.getZIndex() : maxZIndex + 1);
         node.setStyle(request.getStyle() != null ? request.getStyle() : new HashMap<>());
 
-        // 设置缓存信息（如果是新建实体）
-        if (cachedName != null) {
-            node.setCachedName(cachedName);
-        }
-        if (cachedThumbnailUrl != null) {
-            node.setCachedThumbnailUrl(cachedThumbnailUrl);
-        }
-
         nodeMapper.insert(node);
+
+        // 记录操作历史
+        historyService.recordNodeCreate(node, userId);
 
         log.info("画布节点创建成功: nodeId={}, canvasId={}, entityType={}, entityId={}, layer={}",
                 node.getId(), request.getCanvasId(), request.getEntityType(), entityId, layer);
@@ -158,6 +210,14 @@ public class CanvasNodeServiceImpl implements CanvasNodeService {
                 // 边创建失败不影响节点创建，仅记录警告
                 log.warn("节点创建时创建边失败（节点已创建）: error={}", e.getMessage());
             }
+        }
+
+        // 主动 enrich entityDetail，让前端立即拿到 mediaType / coverUrl 等字段
+        // 否则前端需要刷新页面才能看到正确的节点类型
+        try {
+            nodeEnrichmentService.enrich(java.util.Collections.singletonList(response));
+        } catch (Exception e) {
+            log.warn("createNode enrich 失败（节点已创建）: nodeId={}, error={}", node.getId(), e.getMessage());
         }
 
         return response;
@@ -242,6 +302,14 @@ public class CanvasNodeServiceImpl implements CanvasNodeService {
         // episodeId 从请求中获取
         String episodeId = request.getEpisodeId();
 
+        // 把 mediaType 注入 extraData.assetType（Project 端从此处取媒介子类型）
+        Map<String, Object> extraData = request.getEntityExtraData() != null
+                ? new HashMap<>(request.getEntityExtraData())
+                : new HashMap<>();
+        if (StringUtils.hasText(request.getMediaType())) {
+            extraData.put("assetType", request.getMediaType().toUpperCase());
+        }
+
         CanvasEntityCreateRequest createRequest = CanvasEntityCreateRequest.builder()
                 .entityType(request.getEntityType())
                 .name(request.getEntityName())
@@ -255,7 +323,7 @@ public class CanvasNodeServiceImpl implements CanvasNodeService {
                 .width(request.getWidth())
                 .height(request.getHeight())
                 .style(request.getStyle())
-                .extraData(request.getEntityExtraData())
+                .extraData(extraData)
                 .build();
 
         Result<CanvasEntityCreateResponse> result = projectFeignClient.createEntity(createRequest);
@@ -293,9 +361,6 @@ public class CanvasNodeServiceImpl implements CanvasNodeService {
         // 保存之前的状态用于事件
         CanvasNode previousState = copyNodeState(node);
 
-        if (request.getEntityVersionId() != null) {
-            node.setEntityVersionId(request.getEntityVersionId());
-        }
         if (request.getPositionX() != null) {
             node.setPositionX(request.getPositionX());
         }
@@ -372,10 +437,8 @@ public class CanvasNodeServiceImpl implements CanvasNodeService {
                 // 更新节点缓存信息
                 if (entityResponse != null && entityResponse.isSuccess()) {
                     if (entityResponse.getName() != null) {
-                        node.setCachedName(entityResponse.getName());
                     }
                     if (entityResponse.getThumbnailUrl() != null) {
-                        node.setCachedThumbnailUrl(entityResponse.getThumbnailUrl());
                     }
                     log.info("节点实体同步更新成功: nodeId={}, entityType={}, entityId={}",
                             nodeId, node.getEntityType(), node.getEntityId());
@@ -490,17 +553,21 @@ public class CanvasNodeServiceImpl implements CanvasNodeService {
     @Override
     public List<CanvasNodeResponse> listByCanvasId(String canvasId) {
         List<CanvasNode> nodes = nodeMapper.selectByCanvasId(canvasId);
-        return nodes.stream()
+        List<CanvasNodeResponse> responses = nodes.stream()
                 .map(CanvasNodeResponse::fromEntity)
                 .collect(Collectors.toList());
+        nodeEnrichmentService.enrich(responses);
+        return responses;
     }
 
     @Override
     public List<CanvasNodeResponse> listByEntity(String entityType, String entityId) {
         List<CanvasNode> nodes = nodeMapper.selectByEntity(entityType, entityId);
-        return nodes.stream()
+        List<CanvasNodeResponse> responses = nodes.stream()
                 .map(CanvasNodeResponse::fromEntity)
                 .collect(Collectors.toList());
+        nodeEnrichmentService.enrich(responses);
+        return responses;
     }
 
     @Override
@@ -600,8 +667,6 @@ public class CanvasNodeServiceImpl implements CanvasNodeService {
     public void updateCachedInfo(String entityType, String entityId, String name, String thumbnailUrl) {
         List<CanvasNode> nodes = nodeMapper.selectByEntity(entityType, entityId);
         for (CanvasNode node : nodes) {
-            node.setCachedName(name);
-            node.setCachedThumbnailUrl(thumbnailUrl);
             nodeMapper.updateById(node);
         }
         log.info("更新节点缓存信息: entityType={}, entityId={}, count={}", entityType, entityId, nodes.size());
@@ -642,6 +707,71 @@ public class CanvasNodeServiceImpl implements CanvasNodeService {
     /**
      * 获取节点或抛出异常
      */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void batchUpdate(BatchUpdateRequest request, String userId) {
+        if (request.getNodeIds() == null || request.getNodeIds().isEmpty()) {
+            return;
+        }
+
+        List<CanvasNode> updatedNodes = new ArrayList<>();
+        List<CanvasNode> previousStates = new ArrayList<>();
+        String canvasId = null;
+        String workspaceId = null;
+
+        for (String nodeId : request.getNodeIds()) {
+            CanvasNode node = nodeMapper.selectById(nodeId);
+            if (node == null) continue;
+
+            if (canvasId == null) {
+                canvasId = node.getCanvasId();
+                workspaceId = node.getWorkspaceId();
+            }
+
+            previousStates.add(copyNodeState(node));
+
+            if (request.getDeltaX() != null || request.getDeltaY() != null) {
+                node.setPositionX(node.getPositionX().add(request.getDeltaX() != null ? request.getDeltaX() : BigDecimal.ZERO));
+                node.setPositionY(node.getPositionY().add(request.getDeltaY() != null ? request.getDeltaY() : BigDecimal.ZERO));
+            }
+            if (request.getZIndex() != null) node.setZIndex(request.getZIndex());
+            if (request.getLocked() != null) node.setLocked(request.getLocked());
+
+            nodeMapper.updateById(node);
+            updatedNodes.add(node);
+        }
+
+        if (!updatedNodes.isEmpty() && canvasId != null) {
+            eventPublisher.publishAsync(new BatchNodesUpdatedEvent(
+                    canvasId, updatedNodes, previousStates, userId, workspaceId));
+        }
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void batchDelete(List<String> nodeIds, String userId) {
+        if (nodeIds == null || nodeIds.isEmpty()) {
+            return;
+        }
+
+        List<CanvasNode> deletedNodes = new ArrayList<>();
+        for (String nodeId : nodeIds) {
+            CanvasNode node = nodeMapper.selectById(nodeId);
+            if (node != null) {
+                node.setDeleted(CommonConstants.DELETED);
+                nodeMapper.updateById(node);
+                deletedNodes.add(node);
+            }
+        }
+
+        for (CanvasNode node : deletedNodes) {
+            eventPublisher.publishAsync(new NodeDeletedEvent(
+                    node.getId(), node.getCanvasId(),
+                    node.getEntityType(), node.getEntityId(),
+                    userId, node.getWorkspaceId()));
+        }
+    }
+
     private CanvasNode getNodeOrThrow(String nodeId) {
         CanvasNode node = nodeMapper.selectById(nodeId);
         if (node == null || node.getDeleted() == CommonConstants.DELETED) {
@@ -660,7 +790,6 @@ public class CanvasNodeServiceImpl implements CanvasNodeService {
         copy.setCanvasId(source.getCanvasId());
         copy.setEntityType(source.getEntityType());
         copy.setEntityId(source.getEntityId());
-        copy.setEntityVersionId(source.getEntityVersionId());
         copy.setPositionX(source.getPositionX());
         copy.setPositionY(source.getPositionY());
         copy.setWidth(source.getWidth());
@@ -669,8 +798,6 @@ public class CanvasNodeServiceImpl implements CanvasNodeService {
         copy.setLocked(source.getLocked());
         copy.setZIndex(source.getZIndex());
         copy.setStyle(source.getStyle() != null ? new HashMap<>(source.getStyle()) : null);
-        copy.setCachedName(source.getCachedName());
-        copy.setCachedThumbnailUrl(source.getCachedThumbnailUrl());
         return copy;
     }
 }

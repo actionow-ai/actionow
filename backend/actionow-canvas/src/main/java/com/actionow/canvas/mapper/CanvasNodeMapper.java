@@ -61,7 +61,6 @@ public interface CanvasNodeMapper extends BaseMapper<CanvasNode> {
         return selectList(new LambdaQueryWrapper<CanvasNode>()
                 .eq(CanvasNode::getCanvasId, canvasId)
                 .in(CanvasNode::getEntityType, entityTypes)
-                .eq(CanvasNode::getHidden, false)
                 .eq(CanvasNode::getDeleted, CommonConstants.NOT_DELETED)
                 .orderByAsc(CanvasNode::getZIndex));
     }
@@ -165,5 +164,29 @@ public interface CanvasNodeMapper extends BaseMapper<CanvasNode> {
                 .eq(CanvasNode::getEntityType, entityType)
                 .in(CanvasNode::getEntityId, entityIds)
                 .eq(CanvasNode::getDeleted, CommonConstants.NOT_DELETED));
+    }
+
+    /**
+     * 视口空间查询（性能优化）
+     * 查询指定视口范围内的节点
+     */
+    default List<CanvasNode> selectByViewport(String canvasId,
+                                               java.math.BigDecimal minX, java.math.BigDecimal minY,
+                                               java.math.BigDecimal maxX, java.math.BigDecimal maxY,
+                                               Integer limit) {
+        LambdaQueryWrapper<CanvasNode> wrapper = new LambdaQueryWrapper<CanvasNode>()
+                .eq(CanvasNode::getCanvasId, canvasId)
+                .ge(CanvasNode::getPositionX, minX)
+                .le(CanvasNode::getPositionX, maxX)
+                .ge(CanvasNode::getPositionY, minY)
+                .le(CanvasNode::getPositionY, maxY)
+                .eq(CanvasNode::getDeleted, CommonConstants.NOT_DELETED)
+                .orderByAsc(CanvasNode::getZIndex);
+
+        if (limit != null && limit > 0) {
+            wrapper.last("LIMIT " + limit);
+        }
+
+        return selectList(wrapper);
     }
 }

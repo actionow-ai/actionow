@@ -69,6 +69,17 @@ public interface EntityAssetRelationService {
     List<EntityAssetRelationResponse> listEntityAssets(String entityType, String entityId, String workspaceId);
 
     /**
+     * 批量查询多个实体的关联素材
+     * 单次 SQL 替代 N 次单条查询，避免 N+1 问题（Canvas 模块画布 enrich 用）
+     *
+     * @param refs        实体引用列表 [{entityType, entityId}, ...]
+     * @param workspaceId 工作空间ID（用于权限边界）
+     * @return key 格式 "{entityType}:{entityId}" → 关联素材列表
+     */
+    java.util.Map<String, List<EntityAssetRelationResponse>> batchListEntityAssets(
+            List<com.actionow.project.dto.relation.EntityRef> refs, String workspaceId);
+
+    /**
      * 根据关联类型查询
      */
     List<EntityAssetRelationResponse> listByRelationType(String entityType, String entityId, String relationType, String workspaceId);

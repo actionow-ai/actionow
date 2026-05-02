@@ -1,16 +1,16 @@
 package com.actionow.canvas.feign;
 
-import com.actionow.canvas.dto.BatchEntityCreateRequest;
-import com.actionow.canvas.dto.BatchEntityCreateResponse;
-import com.actionow.canvas.dto.BatchEntityUpdateRequest;
-import com.actionow.canvas.dto.BatchEntityUpdateResponse;
-import com.actionow.canvas.dto.CanvasEntityCreateRequest;
-import com.actionow.canvas.dto.CanvasEntityCreateResponse;
-import com.actionow.canvas.dto.CanvasEntityUpdateRequest;
-import com.actionow.canvas.dto.CanvasEntityUpdateResponse;
-import com.actionow.canvas.dto.CreateEntityAssetRelationRequest;
-import com.actionow.canvas.dto.EntityAssetRelationResponse;
-import com.actionow.canvas.dto.EntityInfo;
+import com.actionow.canvas.dto.feign.BatchEntityCreateRequest;
+import com.actionow.canvas.dto.feign.BatchEntityCreateResponse;
+import com.actionow.canvas.dto.feign.BatchEntityUpdateRequest;
+import com.actionow.canvas.dto.feign.BatchEntityUpdateResponse;
+import com.actionow.canvas.dto.feign.CanvasEntityCreateRequest;
+import com.actionow.canvas.dto.feign.CanvasEntityCreateResponse;
+import com.actionow.canvas.dto.feign.CanvasEntityUpdateRequest;
+import com.actionow.canvas.dto.feign.CanvasEntityUpdateResponse;
+import com.actionow.canvas.dto.feign.CreateEntityAssetRelationRequest;
+import com.actionow.canvas.dto.feign.EntityAssetRelationResponse;
+import com.actionow.canvas.dto.feign.EntityInfo;
 import com.actionow.common.core.result.Result;
 import com.actionow.common.core.result.ResultCode;
 import lombok.extern.slf4j.Slf4j;
@@ -159,6 +159,13 @@ public class ProjectFeignClientFallbackFactory implements FallbackFactory<Projec
                 log.warn("创建实体素材关联降级: entityType={}, entityId={}, assetId={}",
                         request.getEntityType(), request.getEntityId(), request.getAssetId());
                 return Result.fail(ResultCode.INTERNAL_ERROR.getCode(), "Project服务不可用，无法创建实体素材关联");
+            }
+
+            @Override
+            public Result<java.util.Map<String, java.util.List<EntityAssetRelationResponse>>>
+                    batchGetRelatedAssets(java.util.List<com.actionow.canvas.dto.feign.EntityRef> refs) {
+                log.warn("批量获取关联素材降级: count={}", refs != null ? refs.size() : 0);
+                return Result.success(java.util.Collections.emptyMap());
             }
         };
     }

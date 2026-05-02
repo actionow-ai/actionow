@@ -6,7 +6,7 @@ import com.actionow.canvas.mapper.CanvasNodeMapper;
 import com.actionow.common.core.result.Result;
 import com.actionow.common.core.context.UserContext;
 import com.actionow.common.core.context.UserContextHolder;
-import com.actionow.canvas.dto.EntityInfo;
+import com.actionow.canvas.dto.feign.EntityInfo;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -188,21 +188,7 @@ public class StartupCompensationService {
                     continue;
                 }
 
-                // 检查是否需要更新
-                boolean needUpdate = false;
-                if (!Objects.equals(node.getCachedName(), entity.getName())) {
-                    node.setCachedName(entity.getName());
-                    needUpdate = true;
-                }
-                if (!Objects.equals(node.getCachedThumbnailUrl(), entity.getThumbnailUrl())) {
-                    node.setCachedThumbnailUrl(entity.getThumbnailUrl());
-                    needUpdate = true;
-                }
-
-                if (needUpdate) {
-                    canvasNodeMapper.updateById(node);
-                    updatedCount++;
-                }
+                // 缓存字段已删除，无需更新
             }
 
             log.debug("同步完成: entityType={}, checked={}, updated={}",

@@ -1,7 +1,8 @@
 package com.actionow.canvas.service.impl;
 
 import com.actionow.canvas.constant.CanvasConstants;
-import com.actionow.canvas.dto.EntityInfo;
+import com.actionow.common.core.constant.CommonConstants;
+import com.actionow.canvas.dto.feign.EntityInfo;
 import com.actionow.canvas.dto.canvas.*;
 import com.actionow.canvas.dto.edge.CanvasEdgeResponse;
 import com.actionow.canvas.dto.node.CanvasNodeResponse;
@@ -24,6 +25,7 @@ import com.actionow.canvas.mapper.CanvasNodeMapper;
 import com.actionow.canvas.mapper.CanvasViewMapper;
 import com.actionow.canvas.service.CanvasService;
 import com.actionow.canvas.service.CanvasViewService;
+import com.actionow.canvas.service.NodeEnrichmentService;
 import com.actionow.common.core.exception.BusinessException;
 import com.actionow.common.core.id.UuidGenerator;
 import com.actionow.common.core.result.Result;
@@ -34,6 +36,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -56,6 +59,16 @@ public class CanvasServiceImpl implements CanvasService {
     private final LayoutEngineFactory layoutEngineFactory;
     private final CanvasEventPublisher eventPublisher;
     private final CanvasViewService viewService;
+    private final NodeEnrichmentService nodeEnrichmentService;
+
+    @Override
+    public List<CanvasResponse> listByWorkspace(String workspaceId) {
+        return canvasMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Canvas>()
+                        .eq(Canvas::getWorkspaceId, workspaceId)
+                        .orderByDesc(Canvas::getCreatedAt)
+        ).stream().map(this::toResponse).toList();
+    }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -81,6 +94,9 @@ public class CanvasServiceImpl implements CanvasService {
 
         // 初始化预设视图
         viewService.initPresetViews(canvas.getId(), workspaceId);
+
+        // 初始化骨架节点（SCRIPT + 5 个 GROUP）
+        initSkeletonNodes(canvas.getId(), request.getScriptId(), workspaceId);
 
         log.info("创建画布: canvasId={}, scriptId={}, workspaceId={}",
                 canvas.getId(), canvas.getScriptId(), workspaceId);
@@ -108,6 +124,8 @@ public class CanvasServiceImpl implements CanvasService {
     public CanvasResponse getOrCreateByScriptId(String scriptId, String workspaceId, String userId) {
         Canvas canvas = canvasMapper.selectByScriptId(scriptId);
         if (canvas != null) {
+            // 老画布也补一次骨架（幂等：已存在的 GROUP 节点不会被重复插入）
+            initSkeletonNodes(canvas.getId(), scriptId, workspaceId);
             return toResponse(canvas);
         }
 
@@ -115,6 +133,87 @@ public class CanvasServiceImpl implements CanvasService {
         request.setScriptId(scriptId);
 
         return createCanvas(request, workspaceId, userId);
+    }
+
+    /**
+     * 初始化画布骨架节点：
+     * - 1 个 SCRIPT ENTITY 节点（中心顶部）
+     * - 5 个 GROUP 容器节点（CHARACTER / SCENE / PROP / EPISODE / STORYBOARD）
+     *
+     * 幂等：如果该 canvas 已存在某类型的 GROUP 节点，则跳过该类型；SCRIPT 节点同理。
+     * 用 nodeMapper 直接 insert，绕过 nodeService 的"必须有 entityId/entityName"校验。
+     */
+    private void initSkeletonNodes(String canvasId, String scriptId, String workspaceId) {
+        // 不限 deleted 查（DB unique 约束不带 WHERE deleted=0，软删的旧记录仍占 key 槽位）
+        com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<CanvasNode> wrapper =
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<>();
+        wrapper.eq(CanvasNode::getCanvasId, canvasId)
+                .eq(CanvasNode::getEntityType, CanvasConstants.EntityType.SCRIPT)
+                .eq(CanvasNode::getEntityId, scriptId)
+                .last("LIMIT 1");
+        CanvasNode existing = nodeMapper.selectOne(wrapper);
+
+        if (existing == null) {
+            CanvasNode scriptNode = new CanvasNode();
+            scriptNode.setId(UuidGenerator.generateUuidV7());
+            scriptNode.setWorkspaceId(workspaceId);
+            scriptNode.setCanvasId(canvasId);
+            scriptNode.setNodeType("ENTITY");
+            scriptNode.setEntityType(CanvasConstants.EntityType.SCRIPT);
+            scriptNode.setEntityId(scriptId);
+            scriptNode.setLayer(CanvasConstants.Layer.SCRIPT);
+            scriptNode.setPositionX(BigDecimal.valueOf(560));
+            scriptNode.setPositionY(BigDecimal.valueOf(40));
+            scriptNode.setWidth(BigDecimal.valueOf(280));
+            scriptNode.setHeight(BigDecimal.valueOf(120));
+            scriptNode.setCollapsed(false);
+            scriptNode.setLocked(false);
+            scriptNode.setZIndex(0);
+            scriptNode.setStyle(new HashMap<>());
+            nodeMapper.insert(scriptNode);
+        } else if (existing.getDeleted() != null
+                && existing.getDeleted() == CommonConstants.DELETED) {
+            // 软删过的 SCRIPT 节点 → 复活（避免 unique key 冲突）
+            existing.setDeleted(CommonConstants.NOT_DELETED);
+            existing.setPositionX(BigDecimal.valueOf(560));
+            existing.setPositionY(BigDecimal.valueOf(40));
+            nodeMapper.updateById(existing);
+            log.info("复活已软删的 SCRIPT 节点: canvasId={}, scriptId={}", canvasId, scriptId);
+        }
+        // 否则节点存在且未删，跳过
+
+        // 不再创建 5 个 GROUP 容器节点（TapNow 风格画布只保留 SCRIPT，
+        // 其他节点由用户双击空白时自由创建）。
+    }
+
+    /**
+     * 把 parent_node_id 为 null 的老 ENTITY 节点挂到对应类型的 GROUP 节点下。
+     * 幂等：跑完一次后续基本是空操作（每次只处理 parent_node_id IS NULL 的孤儿）。
+     */
+    private void backfillOrphanParentNodeIds(String canvasId) {
+        List<CanvasNode> all = nodeMapper.selectByCanvasId(canvasId);
+        Map<String, String> groupIdByEntityType = new HashMap<>();
+        for (CanvasNode n : all) {
+            if ("GROUP".equals(n.getNodeType()) && n.getEntityType() != null) {
+                groupIdByEntityType.putIfAbsent(n.getEntityType(), n.getId());
+            }
+        }
+
+        int backfilled = 0;
+        for (CanvasNode n : all) {
+            if (!"ENTITY".equals(n.getNodeType())) continue;
+            if (n.getParentNodeId() != null) continue;
+            // SCRIPT 节点不挂到任何组下
+            if (CanvasConstants.EntityType.SCRIPT.equals(n.getEntityType())) continue;
+            String groupId = groupIdByEntityType.get(n.getEntityType());
+            if (groupId == null) continue;
+            n.setParentNodeId(groupId);
+            nodeMapper.updateById(n);
+            backfilled++;
+        }
+        if (backfilled > 0) {
+            log.info("回填 parent_node_id 完成: canvasId={}, count={}", canvasId, backfilled);
+        }
     }
 
     @Override
@@ -223,18 +322,9 @@ public class CanvasServiceImpl implements CanvasService {
             List<CanvasNode> allNodes = nodeMapper.selectByCanvasId(canvasId);
             nodes = allNodes.stream()
                     .filter(n -> visibleEntityKeys.contains(n.getEntityType() + ":" + n.getEntityId()))
-                    .filter(n -> !Boolean.TRUE.equals(n.getHidden()))
                     .collect(Collectors.toList());
 
-            // 获取聚焦实体的名称
-            CanvasNode focusNode = nodes.stream()
-                    .filter(n -> focusEntityType.equals(n.getEntityType())
-                            && focusEntityId.equals(n.getEntityId()))
-                    .findFirst()
-                    .orElse(null);
-            if (focusNode != null) {
-                focusEntityName = focusNode.getCachedName();
-            }
+            // 聚焦实体的名称在 enrichNodeResponses 后从 entityDetail.name 读取（见下方）
 
             // 过滤边：只保留两端都在可见节点中的边
             Set<String> visibleNodeEntityKeys = nodes.stream()
@@ -523,67 +613,10 @@ public class CanvasServiceImpl implements CanvasService {
     }
 
     /**
-     * 批量获取实体详情并填充到节点响应
+     * 增强节点列表 - delegate 到共享的 NodeEnrichmentService
      */
     private void enrichNodeResponses(List<CanvasNodeResponse> nodeResponses) {
-        if (nodeResponses == null || nodeResponses.isEmpty()) {
-            return;
-        }
-
-        Map<String, List<String>> idsByType = new HashMap<>();
-        for (CanvasNodeResponse node : nodeResponses) {
-            idsByType.computeIfAbsent(node.getEntityType(), k -> new ArrayList<>())
-                    .add(node.getEntityId());
-        }
-
-        Map<String, EntityInfo> entityInfoMap = new java.util.concurrent.ConcurrentHashMap<>();
-        idsByType.entrySet().parallelStream().forEach(entry -> {
-            String entityType = entry.getKey();
-            List<String> ids = entry.getValue();
-
-            try {
-                List<EntityInfo> infos = fetchEntitiesByType(entityType, ids);
-                if (infos != null) {
-                    for (EntityInfo info : infos) {
-                        entityInfoMap.put(entityType + ":" + info.getId(), info);
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("获取实体信息失败: entityType={}, error={}", entityType, e.getMessage());
-            }
-        });
-
-        for (CanvasNodeResponse node : nodeResponses) {
-            String key = node.getEntityType() + ":" + node.getEntityId();
-            EntityInfo info = entityInfoMap.get(key);
-            if (info != null) {
-                node.setEntityDetail(info.toEntityDetailMap());
-            }
-        }
-    }
-
-    private List<EntityInfo> fetchEntitiesByType(String entityType, List<String> ids) {
-        if (ids == null || ids.isEmpty()) {
-            return Collections.emptyList();
-        }
-
-        String normalizedType = CanvasConstants.EntityType.normalize(entityType);
-
-        Result<List<EntityInfo>> result = switch (normalizedType) {
-            case CanvasConstants.EntityType.SCRIPT -> projectFeignClient.batchGetScripts(ids);
-            case CanvasConstants.EntityType.EPISODE -> projectFeignClient.batchGetEpisodes(ids);
-            case CanvasConstants.EntityType.STORYBOARD -> projectFeignClient.batchGetStoryboards(ids);
-            case CanvasConstants.EntityType.CHARACTER -> projectFeignClient.batchGetCharacters(ids);
-            case CanvasConstants.EntityType.SCENE -> projectFeignClient.batchGetScenes(ids);
-            case CanvasConstants.EntityType.PROP -> projectFeignClient.batchGetProps(ids);
-            case CanvasConstants.EntityType.ASSET -> projectFeignClient.batchGetAssets(ids);
-            default -> null;
-        };
-
-        if (result != null && result.isSuccess() && result.getData() != null) {
-            return result.getData();
-        }
-        return Collections.emptyList();
+        nodeEnrichmentService.enrich(nodeResponses);
     }
 
     private CanvasResponse toResponse(Canvas canvas) {

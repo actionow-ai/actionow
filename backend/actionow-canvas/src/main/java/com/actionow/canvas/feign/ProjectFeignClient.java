@@ -1,16 +1,17 @@
 package com.actionow.canvas.feign;
 
-import com.actionow.canvas.dto.BatchEntityCreateRequest;
-import com.actionow.canvas.dto.BatchEntityCreateResponse;
-import com.actionow.canvas.dto.BatchEntityUpdateRequest;
-import com.actionow.canvas.dto.BatchEntityUpdateResponse;
-import com.actionow.canvas.dto.CanvasEntityCreateRequest;
-import com.actionow.canvas.dto.CanvasEntityCreateResponse;
-import com.actionow.canvas.dto.CanvasEntityUpdateRequest;
-import com.actionow.canvas.dto.CanvasEntityUpdateResponse;
-import com.actionow.canvas.dto.CreateEntityAssetRelationRequest;
-import com.actionow.canvas.dto.EntityAssetRelationResponse;
-import com.actionow.canvas.dto.EntityInfo;
+import com.actionow.canvas.dto.feign.BatchEntityCreateRequest;
+import com.actionow.canvas.dto.feign.BatchEntityCreateResponse;
+import com.actionow.canvas.dto.feign.BatchEntityUpdateRequest;
+import com.actionow.canvas.dto.feign.BatchEntityUpdateResponse;
+import com.actionow.canvas.dto.feign.CanvasEntityCreateRequest;
+import com.actionow.canvas.dto.feign.CanvasEntityCreateResponse;
+import com.actionow.canvas.dto.feign.CanvasEntityUpdateRequest;
+import com.actionow.canvas.dto.feign.CanvasEntityUpdateResponse;
+import com.actionow.canvas.dto.feign.CreateEntityAssetRelationRequest;
+import com.actionow.canvas.dto.feign.EntityAssetRelationResponse;
+import com.actionow.canvas.dto.feign.EntityInfo;
+import com.actionow.canvas.dto.feign.EntityRef;
 import com.actionow.common.core.result.Result;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -21,6 +22,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Project 服务 Feign 客户端
@@ -248,4 +250,15 @@ public interface ProjectFeignClient {
     @PostMapping("/entity-asset-relations/create")
     Result<EntityAssetRelationResponse> createEntityAssetRelation(
             @RequestBody CreateEntityAssetRelationRequest request);
+
+    /**
+     * 批量查询多个实体的关联素材
+     * Canvas 画布渲染时 enrich N 个节点用，替代 N 次 single 调用。
+     *
+     * @param refs 实体引用列表 [{entityType, entityId}, ...]
+     * @return key 格式 "{entityType}:{entityId}" → 关联素材列表
+     */
+    @PostMapping("/entity-assets/batch-get")
+    Result<Map<String, List<EntityAssetRelationResponse>>> batchGetRelatedAssets(
+            @RequestBody List<EntityRef> refs);
 }

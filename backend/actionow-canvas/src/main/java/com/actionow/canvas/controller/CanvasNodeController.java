@@ -1,12 +1,7 @@
 package com.actionow.canvas.controller;
 
 import com.actionow.canvas.constant.CanvasConstants;
-import com.actionow.canvas.dto.node.CanvasNodeResponse;
-import com.actionow.canvas.dto.node.CreateNodeRequest;
-import com.actionow.canvas.dto.node.CreateNodeReferenceRequest;
-import com.actionow.canvas.dto.node.CreateNodeWithEntityRequest;
-import com.actionow.canvas.dto.node.UpdateNodeRequest;
-import com.actionow.canvas.dto.node.UpdateNodeWithEntityRequest;
+import com.actionow.canvas.dto.node.*;
 import com.actionow.canvas.service.CanvasNodeService;
 import com.actionow.common.core.context.UserContextHolder;
 import com.actionow.common.core.result.Result;
@@ -16,6 +11,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -32,8 +28,8 @@ public class CanvasNodeController {
     private final CanvasNodeService nodeService;
 
     /**
-     * 创建节点（通用接口，支持两种模式）
-     * @deprecated 推荐使用 /reference 或 /with-entity 接口
+     * 创建节点
+     * 双模式：传 entityId 引用已有实体；传 entityName + entityScope 等字段同时新建实体
      */
     @PostMapping
     @RequireWorkspaceMember(minRole = WorkspaceRole.MEMBER)
@@ -41,32 +37,6 @@ public class CanvasNodeController {
         String workspaceId = UserContextHolder.getWorkspaceId();
         String userId = UserContextHolder.getUserId();
         CanvasNodeResponse response = nodeService.createNode(request, workspaceId, userId);
-        return Result.success(response);
-    }
-
-    /**
-     * 创建节点 - 引用已有实体
-     * 当实体已存在时使用，只创建画布节点引用
-     */
-    @PostMapping("/reference")
-    @RequireWorkspaceMember(minRole = WorkspaceRole.MEMBER)
-    public Result<CanvasNodeResponse> createNodeReference(@RequestBody @Valid CreateNodeReferenceRequest request) {
-        String workspaceId = UserContextHolder.getWorkspaceId();
-        String userId = UserContextHolder.getUserId();
-        CanvasNodeResponse response = nodeService.createNode(request.toCreateNodeRequest(), workspaceId, userId);
-        return Result.success(response);
-    }
-
-    /**
-     * 创建节点 - 同时创建新实体
-     * 当需要新建实体时使用，会先创建实体再创建画布节点
-     */
-    @PostMapping("/with-entity")
-    @RequireWorkspaceMember(minRole = WorkspaceRole.MEMBER)
-    public Result<CanvasNodeResponse> createNodeWithEntity(@RequestBody @Valid CreateNodeWithEntityRequest request) {
-        String workspaceId = UserContextHolder.getWorkspaceId();
-        String userId = UserContextHolder.getUserId();
-        CanvasNodeResponse response = nodeService.createNode(request.toCreateNodeRequest(), workspaceId, userId);
         return Result.success(response);
     }
 
@@ -93,13 +63,44 @@ public class CanvasNodeController {
     }
 
     /**
-     * 获取画布中的所有节点
+     * 创建分组
      */
-    @GetMapping("/canvas/{canvasId}")
-    @RequireWorkspaceMember
-    public Result<List<CanvasNodeResponse>> listByCanvasId(@PathVariable String canvasId) {
-        List<CanvasNodeResponse> nodes = nodeService.listByCanvasId(canvasId);
-        return Result.success(nodes);
+    @PostMapping("/groups")
+    @RequireWorkspaceMember(minRole = WorkspaceRole.MEMBER)
+    public Result<CanvasNodeResponse> createGroup(@RequestBody @Valid CreateGroupRequest request) {
+        String workspaceId = UserContextHolder.getWorkspaceId();
+        String userId = UserContextHolder.getUserId();
+        CanvasNodeResponse response = nodeService.createGroup(request, workspaceId, userId);
+        return Result.success(response);
+    }
+
+    /**
+     * 整组移动
+     */
+    @PutMapping("/groups/{groupId}/move")
+    @RequireWorkspaceMember(minRole = WorkspaceRole.MEMBER)
+    public Result<Void> moveGroup(
+            @PathVariable String groupId,
+            @RequestParam("deltaX") BigDecimal deltaX,
+            @RequestParam("deltaY") BigDecimal deltaY) {
+        nodeService.moveGroup(groupId, deltaX, deltaY);
+        return Result.success();
+    }
+
+    @PostMapping("/batch/update")
+    @RequireWorkspaceMember(minRole = WorkspaceRole.MEMBER)
+    public Result<Void> batchUpdate(@RequestBody BatchUpdateRequest request) {
+        String userId = UserContextHolder.getUserId();
+        nodeService.batchUpdate(request, userId);
+        return Result.success();
+    }
+
+    @PostMapping("/batch/delete")
+    @RequireWorkspaceMember(minRole = WorkspaceRole.MEMBER)
+    public Result<Void> batchDelete(@RequestBody List<String> nodeIds) {
+        String userId = UserContextHolder.getUserId();
+        nodeService.batchDelete(nodeIds, userId);
+        return Result.success();
     }
 
     /**

@@ -69,9 +69,20 @@ public class CreateNodeRequest {
     private Map<String, Object> entityExtraData;
 
     /**
-     * 实体版本ID（可选）
+     * ASSET 子类型：IMAGE / VIDEO / AUDIO / TEXT
+     * 仅 entityType=ASSET 且新建实体模式时使用，会通过 extraData.assetType 传给 Project
      */
-    private String entityVersionId;
+    private String mediaType;
+
+    /**
+     * 节点类型: ENTITY / STICKY_NOTE / IFRAME / SHAPE / GROUP
+     */
+    private String nodeType;
+
+    /**
+     * freeform 节点内容（仅 nodeType!=ENTITY 时使用）
+     */
+    private Map<String, Object> content;
 
     /**
      * 节点层级（可选，不填则根据 entityType 自动推断）

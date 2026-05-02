@@ -6,8 +6,8 @@ import com.actionow.common.core.context.UserContextHolder;
 import com.actionow.common.mq.constant.MqConstants;
 import com.actionow.common.mq.consumer.ConsumerRetryHelper;
 import com.actionow.common.mq.message.MessageWrapper;
-import com.actionow.canvas.dto.EntityChangeMessage;
 import com.actionow.canvas.service.CanvasSyncService;
+import com.actionow.common.mq.message.CollabEntityChangeEvent;
 import com.rabbitmq.client.Channel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -46,53 +46,44 @@ public class EntityChangeConsumer {
             exchange = @Exchange(value = MqConstants.EXCHANGE_TOPIC, type = "topic"),
             key = MqConstants.Canvas.ROUTING_ENTITY_CHANGE
     ))
-    public void handleEntityChange(MessageWrapper<EntityChangeMessage> message, Channel channel,
+    public void handleEntityChange(MessageWrapper<CollabEntityChangeEvent> message, Channel channel,
                                    @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag,
                                    @Header(value = AmqpHeaders.REDELIVERED, required = false) Boolean redelivered) {
         try {
-            // 恢复上下文
             restoreContext(message);
+            CollabEntityChangeEvent event = message.getPayload();
 
-            EntityChangeMessage payload = message.getPayload();
-
-            // 增加诊断日志：检测重投递和重试
             if (Boolean.TRUE.equals(redelivered)) {
-                log.warn("检测到消息重投递: messageId={}, entityType={}, entityId={}, scriptId={}, changeType={}, retryCount={}",
-                        message.getMessageId(), payload.getEntityType(), payload.getEntityId(),
-                        payload.getScriptId(), payload.getChangeType(), message.getRetryCount());
+                log.warn("检测到消息重投递: messageId={}, entityType={}, entityId={}, scriptId={}, eventType={}, retryCount={}",
+                        message.getMessageId(), event.getEntityType(), event.getEntityId(),
+                        event.getScriptId(), event.getEventType(), message.getRetryCount());
             } else {
-                log.info("收到实体变更消息: messageId={}, entityType={}, entityId={}, scriptId={}, changeType={}",
-                        message.getMessageId(), payload.getEntityType(), payload.getEntityId(),
-                        payload.getScriptId(), payload.getChangeType());
+                log.info("收到实体变更消息: messageId={}, entityType={}, entityId={}, scriptId={}, eventType={}, operator={}",
+                        message.getMessageId(), event.getEntityType(), event.getEntityId(),
+                        event.getScriptId(), event.getEventType(), event.getOperatorId());
             }
 
-            // 提取实体信息
-            String entityType = payload.getEntityType();
-            String entityId = payload.getEntityId();
-            String changeType = payload.getChangeType();
-            Map<String, Object> entityData = payload.getEntityData();
+            String entityType = event.getEntityType();
+            String entityId = event.getEntityId();
+            String eventType = event.getEventType();
 
-            // 提取名称和缩略图
-            String name = extractName(entityData);
-            String thumbnailUrl = extractThumbnailUrl(entityData);
+            // 提取名称和缩略图（从 data 字段）
+            String name = extractField(event.getData(), "name", "title");
+            String thumbnailUrl = extractField(event.getData(), "thumbnailUrl", "coverUrl", "url");
 
-            // 根据变更类型处理
-            switch (changeType) {
-                case CanvasConstants.ChangeType.CREATED ->
+            switch (eventType) {
+                case CollabEntityChangeEvent.EventType.CREATED ->
                         canvasSyncService.handleEntityCreated(entityType, entityId,
-                                payload.getScriptId(),
-                                payload.getParentEntityType(), payload.getParentEntityId(),
-                                message.getWorkspaceId(), name,
-                                payload.getRelatedEntities());
-                case CanvasConstants.ChangeType.UPDATED ->
+                                event.getScriptId(), null, null,
+                                event.getWorkspaceId(), name);
+                case CollabEntityChangeEvent.EventType.UPDATED ->
                         canvasSyncService.handleEntityUpdated(entityType, entityId, name, thumbnailUrl);
-                case CanvasConstants.ChangeType.DELETED ->
+                case CollabEntityChangeEvent.EventType.DELETED ->
                         canvasSyncService.handleEntityDeleted(entityType, entityId);
                 default ->
-                        log.warn("未知的变更类型: changeType={}", changeType);
+                        log.warn("未知的事件类型: eventType={}", eventType);
             }
 
-            // 确认消息
             channel.basicAck(deliveryTag, false);
             log.debug("实体变更消息处理完成: messageId={}", message.getMessageId());
 
@@ -118,43 +109,19 @@ public class EntityChangeConsumer {
     }
 
     /**
-     * 从实体数据中提取名称
+     * 从 data 对象中提取字段（支持多个候选字段名）
      */
-    private String extractName(Map<String, Object> entityData) {
-        if (entityData == null) {
+    private String extractField(Object data, String... fieldNames) {
+        if (data == null || !(data instanceof Map)) {
             return null;
         }
-        // 尝试多种字段名
-        Object name = entityData.get("name");
-        if (name != null) {
-            return name.toString();
-        }
-        Object title = entityData.get("title");
-        if (title != null) {
-            return title.toString();
-        }
-        return null;
-    }
-
-    /**
-     * 从实体数据中提取缩略图URL
-     */
-    private String extractThumbnailUrl(Map<String, Object> entityData) {
-        if (entityData == null) {
-            return null;
-        }
-        // 尝试多种字段名
-        Object thumbnail = entityData.get("thumbnailUrl");
-        if (thumbnail != null) {
-            return thumbnail.toString();
-        }
-        Object cover = entityData.get("coverUrl");
-        if (cover != null) {
-            return cover.toString();
-        }
-        Object url = entityData.get("url");
-        if (url != null) {
-            return url.toString();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> dataMap = (Map<String, Object>) data;
+        for (String fieldName : fieldNames) {
+            Object value = dataMap.get(fieldName);
+            if (value != null) {
+                return value.toString();
+            }
         }
         return null;
     }

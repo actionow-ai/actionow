@@ -29,22 +29,35 @@ public class CanvasNode extends TenantBaseEntity {
     private String canvasId;
 
     /**
+     * 节点类型: ENTITY(业务实体) / STICKY_NOTE(便签) / IFRAME(嵌入) / SHAPE(形状) / GROUP(分组)
+     */
+    @TableField("node_type")
+    private String nodeType;
+
+    /**
      * 实体类型: SCRIPT, EPISODE, STORYBOARD, CHARACTER, SCENE, PROP, STYLE, ASSET
+     * 仅当 nodeType = ENTITY 时有效
      */
     @TableField("entity_type")
     private String entityType;
 
     /**
      * 实体ID
+     * 仅当 nodeType = ENTITY 时有效
      */
     @TableField("entity_id")
     private String entityId;
 
     /**
-     * 实体版本ID（可选，指定特定版本）
+     * freeform 节点内容（JSON）
+     * 仅当 nodeType != ENTITY 时有效
+     * STICKY_NOTE: {text, color, fontSize}
+     * IFRAME: {url, title}
+     * SHAPE: {shape, fill, stroke, strokeWidth}
+     * GROUP: {title, collapsed}
      */
-    @TableField("entity_version_id")
-    private String entityVersionId;
+    @TableField(value = "content", typeHandler = JacksonTypeHandler.class)
+    private Map<String, Object> content;
 
     /**
      * 节点层级: SCRIPT, EPISODE, STORYBOARD, CHARACTER, SCENE, PROP, ASSET
@@ -91,11 +104,6 @@ public class CanvasNode extends TenantBaseEntity {
     private Boolean locked;
 
     /**
-     * 是否隐藏
-     */
-    private Boolean hidden;
-
-    /**
      * 层级顺序（z-index）
      */
     @TableField("z_index")
@@ -107,22 +115,4 @@ public class CanvasNode extends TenantBaseEntity {
      */
     @TableField(value = "style", typeHandler = JacksonTypeHandler.class)
     private Map<String, Object> style;
-
-    /**
-     * 缓存的实体名称（冗余存储，用于减少查询）
-     */
-    @TableField("cached_name")
-    private String cachedName;
-
-    /**
-     * 缓存的缩略图URL（冗余存储，用于快速渲染）
-     */
-    @TableField("cached_thumbnail_url")
-    private String cachedThumbnailUrl;
-
-    /**
-     * 缓存的实体状态
-     */
-    @TableField("cached_status")
-    private String cachedStatus;
 }

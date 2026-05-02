@@ -1,4 +1,4 @@
-package com.actionow.canvas.dto;
+package com.actionow.canvas.dto.feign;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -8,7 +8,7 @@ import lombok.NoArgsConstructor;
 import java.util.List;
 
 /**
- * 批量创建实体响应
+ * 批量更新实体响应
  *
  * @author Actionow
  */
@@ -16,12 +16,12 @@ import java.util.List;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class BatchEntityCreateResponse {
+public class BatchEntityUpdateResponse {
 
     /**
-     * 创建结果列表
+     * 更新结果列表
      */
-    private List<EntityCreateResult> results;
+    private List<EntityUpdateResult> results;
 
     /**
      * 成功数量
@@ -39,13 +39,13 @@ public class BatchEntityCreateResponse {
     private Integer totalCount;
 
     /**
-     * 单个实体创建结果
+     * 单个实体更新结果
      */
     @Data
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class EntityCreateResult {
+    public static class EntityUpdateResult {
         /**
          * 请求索引（对应请求列表中的位置）
          */
@@ -57,7 +57,7 @@ public class BatchEntityCreateResponse {
         private Boolean success;
 
         /**
-         * 实体ID（成功时返回）
+         * 实体ID
          */
         private String entityId;
 
