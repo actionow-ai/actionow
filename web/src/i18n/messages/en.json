@@ -1671,6 +1671,18 @@
         "IMAGE": "Image",
         "VIDEO": "Video",
         "AUDIO": "Audio"
+      },
+      "queue": {
+        "title": "Invocation Queue",
+        "description": "Long-running calls (image/video generation) go through RabbitMQ for back-pressure. Leave blank to use the global default queue; a custom queue gets its own worker concurrency and overflow limit.",
+        "queueName": "Queue name",
+        "queueNamePlaceholder": "Blank = global default (runtime.ai.queue_default_name)",
+        "concurrency": "Worker concurrency",
+        "concurrencyPlaceholder": "Default 20",
+        "prefetch": "Prefetch",
+        "prefetchPlaceholder": "Default 20",
+        "maxLength": "Max queue length (back-pressure cap)",
+        "maxLengthPlaceholder": "Default 5000; exceeding returns 503 + Retry-After"
       }
     }
   }

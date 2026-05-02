@@ -43,6 +43,18 @@ public class AiRuntimeConfigService extends RuntimeConfigService {
     public static final String RETRY_WAIT_DURATION_MS              = "runtime.ai.retry_wait_duration_ms";
     public static final String RATE_LIMIT_REFRESH_PERIOD_SECONDS   = "runtime.ai.rate_limit_refresh_period_seconds";
 
+    // ---- Queue (Provider invocation) ----
+    public static final String QUEUE_DEFAULT_NAME                  = "runtime.ai.queue_default_name";
+    public static final String QUEUE_DEFAULT_CONCURRENCY           = "runtime.ai.queue_default_concurrency";
+    public static final String QUEUE_DEFAULT_PREFETCH              = "runtime.ai.queue_default_prefetch";
+    public static final String QUEUE_DEFAULT_MAX_LENGTH            = "runtime.ai.queue_default_max_length";
+    public static final String QUEUE_RESULT_TTL_SECONDS            = "runtime.ai.queue_result_ttl_seconds";
+    public static final String QUEUE_SUBMIT_TIMEOUT_MS             = "runtime.ai.queue_submit_timeout_ms";
+    public static final String QUEUE_MESSAGE_TTL_SECONDS           = "runtime.ai.queue_message_ttl_seconds";
+
+    // ---- Bulkhead ----
+    public static final String BULKHEAD_MAX_CONCURRENT             = "runtime.ai.bulkhead_max_concurrent";
+
     public AiRuntimeConfigService(StringRedisTemplate redisTemplate,
                                    RedisMessageListenerContainer listenerContainer) {
         super(redisTemplate, listenerContainer);
@@ -73,13 +85,27 @@ public class AiRuntimeConfigService extends RuntimeConfigService {
         // 32MB 响应缓冲：平衡 OOM 防护（10 并发 × 32MB = 320MB）与大图兼容性（支持 4K Base64）
         defaults.put(HTTP_MAX_IN_MEMORY_SIZE_BYTES, String.valueOf(32 * 1024 * 1024));
 
-        // Resilience 默认值（与 PluginResilienceConfig 历史硬编码值保持一致，便于无感切换）
+        // Resilience 默认值
+        // CB_HALF_OPEN_PERMITTED_CALLS 从 3 提升到 10：避免 HALF_OPEN 时阻塞型生图调用因
+        // 并发数瞬时超限被拒（旧值 3 在生图场景常误伤一波正常请求）。
         defaults.put(CB_SLIDING_WINDOW_SIZE, "10");
         defaults.put(CB_MINIMUM_CALLS, "5");
-        defaults.put(CB_HALF_OPEN_PERMITTED_CALLS, "3");
+        defaults.put(CB_HALF_OPEN_PERMITTED_CALLS, "10");
         defaults.put(CB_WAIT_DURATION_OPEN_STATE_SECONDS, "30");
         defaults.put(RETRY_WAIT_DURATION_MS, "1000");
         defaults.put(RATE_LIMIT_REFRESH_PERIOD_SECONDS, "60");
+
+        // Queue defaults — provider 调用统一走 RabbitMQ 队列消峰
+        defaults.put(QUEUE_DEFAULT_NAME, "ai.provider.default");
+        defaults.put(QUEUE_DEFAULT_CONCURRENCY, "20");
+        defaults.put(QUEUE_DEFAULT_PREFETCH, "20");
+        defaults.put(QUEUE_DEFAULT_MAX_LENGTH, "5000");
+        defaults.put(QUEUE_RESULT_TTL_SECONDS, "3600");
+        defaults.put(QUEUE_SUBMIT_TIMEOUT_MS, "120000");
+        defaults.put(QUEUE_MESSAGE_TTL_SECONDS, "600");
+
+        // Bulkhead — 单 provider 并发上限（worker 内部对上游的二次防护）
+        defaults.put(BULKHEAD_MAX_CONCURRENT, "40");
     }
 
     // ==================== Named Getters ====================
@@ -162,5 +188,39 @@ public class AiRuntimeConfigService extends RuntimeConfigService {
 
     public int getRateLimitRefreshPeriodSeconds() {
         return getInt(RATE_LIMIT_REFRESH_PERIOD_SECONDS);
+    }
+
+    // ==================== Queue / Bulkhead Getters ====================
+
+    public String getQueueDefaultName() {
+        return getString(QUEUE_DEFAULT_NAME);
+    }
+
+    public int getQueueDefaultConcurrency() {
+        return getInt(QUEUE_DEFAULT_CONCURRENCY);
+    }
+
+    public int getQueueDefaultPrefetch() {
+        return getInt(QUEUE_DEFAULT_PREFETCH);
+    }
+
+    public int getQueueDefaultMaxLength() {
+        return getInt(QUEUE_DEFAULT_MAX_LENGTH);
+    }
+
+    public int getQueueResultTtlSeconds() {
+        return getInt(QUEUE_RESULT_TTL_SECONDS);
+    }
+
+    public long getQueueSubmitTimeoutMs() {
+        return getLong(QUEUE_SUBMIT_TIMEOUT_MS);
+    }
+
+    public int getQueueMessageTtlSeconds() {
+        return getInt(QUEUE_MESSAGE_TTL_SECONDS);
+    }
+
+    public int getBulkheadMaxConcurrent() {
+        return getInt(BULKHEAD_MAX_CONCURRENT);
     }
 }

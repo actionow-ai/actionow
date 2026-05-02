@@ -4,8 +4,12 @@ import com.actionow.ai.config.AiRuntimeConfigService;
 import com.actionow.ai.plugin.auth.AuthConfig;
 import com.actionow.ai.plugin.auth.AuthStrategyFactory;
 import com.actionow.ai.plugin.auth.AuthenticationStrategy;
+import com.actionow.ai.plugin.exception.PluginCircuitBreakerException;
 import com.actionow.ai.plugin.model.PluginConfig;
 import com.actionow.ai.plugin.resilience.PluginResilienceConfig;
+import io.github.resilience4j.bulkhead.Bulkhead;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.reactor.bulkhead.operator.BulkheadOperator;
 import com.actionow.common.core.constant.CommonConstants;
 import com.actionow.common.core.security.InternalAuthProperties;
 import com.actionow.common.core.security.InternalAuthUtils;
@@ -179,7 +183,13 @@ public class PluginHttpClient {
             log.error("[PluginHttpClient] HTTP状态码: {}", e.getStatusCode());
             log.error("[PluginHttpClient] 响应体: {}", e.getResponseBodyAsString());
             throw new PluginHttpException("HTTP request failed: " + e.getResponseBodyAsString(), e);
+        } catch (CallNotPermittedException e) {
+            throw translateCircuitBreaker(config, e);
         } catch (Exception e) {
+            // Reactor 会把 CallNotPermittedException 包到 RuntimeException.cause 里
+            if (e.getCause() instanceof CallNotPermittedException cnp) {
+                throw translateCircuitBreaker(config, cnp);
+            }
             long elapsed = System.currentTimeMillis() - startTime;
             log.error("[PluginHttpClient] ========== HTTP请求异常 ==========");
             log.error("[PluginHttpClient] 响应耗时: {}ms", elapsed);
@@ -187,6 +197,31 @@ public class PluginHttpClient {
             log.error("[PluginHttpClient] 异常信息: {}", e.getMessage(), e);
             throw new PluginHttpException("HTTP request error: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * 将 Resilience4j 的 CallNotPermittedException 翻译为带状态信息的业务异常。
+     * 区分 OPEN（建议长退避）与 HALF_OPEN（建议短延迟立即重试）。
+     */
+    private PluginCircuitBreakerException translateCircuitBreaker(PluginConfig config, CallNotPermittedException e) {
+        String providerId = config != null ? config.getProviderId() : null;
+        String state = "OPEN";
+        int retryAfter = 30;
+        try {
+            // 从消息中提取实际状态（"CircuitBreaker 'xxx' is HALF_OPEN ..."）
+            String msg = e.getMessage();
+            if (msg != null && msg.contains("HALF_OPEN")) {
+                state = "HALF_OPEN";
+                retryAfter = 2;
+            } else if (msg != null && msg.contains("FORCED_OPEN")) {
+                state = "FORCED_OPEN";
+            }
+        } catch (Exception ignore) {
+            // 安全兜底
+        }
+        log.warn("[PluginHttpClient] CircuitBreaker rejected provider={}, state={}, retryAfter={}s",
+            providerId, state, retryAfter);
+        return new PluginCircuitBreakerException(providerId, state, retryAfter);
     }
 
     /**
@@ -418,6 +453,11 @@ public class PluginHttpClient {
     private <T> Mono<T> applyResilienceDecorators(Mono<T> mono, PluginConfig config) {
         String providerId = config.getProviderId();
 
+        // 0. 应用 Bulkhead（最内层，紧贴 HTTP 调用）：单 provider 并发上限，
+        //    超额立即拒绝，让上层把请求塞回队列或返回 BUSY，绝不让线程僵死等待
+        Bulkhead bulkhead = resilienceConfig.getOrCreateBulkhead(providerId);
+        mono = mono.transformDeferred(BulkheadOperator.of(bulkhead));
+
         // 1. 应用限流（超时时间与提供商请求超时对齐，避免慢提供商误触熔断）
         if (config.getRateLimit() != null && config.getRateLimit() > 0) {
             int providerTimeout = config.getTimeout() != null ? config.getTimeout() : 60000;
@@ -426,17 +466,32 @@ public class PluginHttpClient {
         }
 
         // 2. 应用熔断
-        CircuitBreaker circuitBreaker = resilienceConfig.getOrCreateCircuitBreaker(providerId);
+        CircuitBreaker circuitBreaker = resilienceConfig.getOrCreateCircuitBreaker(providerId, config);
         mono = mono.transformDeferred(CircuitBreakerOperator.of(circuitBreaker));
 
-        // 3. 应用重试
+        // 3. 应用重试 — 长耗时阻塞型（IMAGE/VIDEO/AUDIO）禁用重试。
+        // 原因：单次失败被 Retry 放大成 3 次失败计入 CB，加速 OPEN；且生图/视频
+        // 业务侧通常已有任务级重排，HTTP 层重试纯属浪费配额。
         int maxRetries = config.getMaxRetries() != null ? config.getMaxRetries() : 3;
-        if (maxRetries > 1) {
+        if (maxRetries > 1 && !isLongBlockingProvider(config)) {
             Retry retry = resilienceConfig.getOrCreateRetry(providerId, maxRetries, 1000L);
             mono = mono.transformDeferred(RetryOperator.of(retry));
         }
 
         return mono;
+    }
+
+    /**
+     * 判断是否为长耗时阻塞型 provider（IMAGE / VIDEO / AUDIO 等生成类）。
+     * 这类 provider 单次调用通常 30s–300s，HTTP 层重试无意义且会放大 CB 失败计数。
+     */
+    private boolean isLongBlockingProvider(PluginConfig config) {
+        String type = config.getProviderType();
+        if (!StringUtils.hasText(type)) {
+            return false;
+        }
+        String upper = type.toUpperCase();
+        return "IMAGE".equals(upper) || "VIDEO".equals(upper) || "AUDIO".equals(upper);
     }
 
     /**
@@ -449,7 +504,7 @@ public class PluginHttpClient {
         // 轮询不应用限流，轮询频率已由 pollingConfig.intervalMs 控制
 
         // 应用熔断
-        CircuitBreaker circuitBreaker = resilienceConfig.getOrCreateCircuitBreaker(providerId);
+        CircuitBreaker circuitBreaker = resilienceConfig.getOrCreateCircuitBreaker(providerId, config);
         mono = mono.transformDeferred(CircuitBreakerOperator.of(circuitBreaker));
 
         // 轮询请求不应用重试，失败由轮询器处理下一次尝试
@@ -471,7 +526,7 @@ public class PluginHttpClient {
         }
 
         // 2. 应用熔断
-        CircuitBreaker circuitBreaker = resilienceConfig.getOrCreateCircuitBreaker(providerId);
+        CircuitBreaker circuitBreaker = resilienceConfig.getOrCreateCircuitBreaker(providerId, config);
         flux = flux.transformDeferred(CircuitBreakerOperator.of(circuitBreaker));
 
         // 不应用重试，流式请求重试会导致数据重复

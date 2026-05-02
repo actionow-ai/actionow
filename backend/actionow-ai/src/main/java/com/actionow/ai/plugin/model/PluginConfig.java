@@ -144,6 +144,13 @@ public class PluginConfig {
      */
     private Map<String, String> customHeaders;
 
+    /**
+     * 每 Provider 熔断器配置覆盖（可选）
+     * 不设置则使用 AiRuntimeConfigService 的全局默认。
+     * 生图/视频类长耗时 provider 建议配置 TIME_BASED 滑窗。
+     */
+    private CircuitBreakerOverride circuitBreaker;
+
     // ========== TEXT 类型专属字段 ==========
 
     /**
@@ -170,6 +177,32 @@ public class PluginConfig {
      * TEXT 类型多模态能力配置
      */
     private Map<String, Object> multimodalConfig;
+
+    /**
+     * 每 Provider 熔断器覆盖配置
+     *
+     * 字段为 null 时使用 AiRuntimeConfigService 全局默认。
+     * windowType=TIME_BASED 时，slidingWindowSize 表示秒数（例如 60 = 最近 60 秒）。
+     * windowType=COUNT_BASED 时，slidingWindowSize 表示调用次数。
+     */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class CircuitBreakerOverride {
+        /** COUNT_BASED 或 TIME_BASED；生图/视频建议 TIME_BASED */
+        private String windowType;
+        /** 滑窗大小（次数 or 秒，取决于 windowType） */
+        private Integer slidingWindowSize;
+        /** 满多少次才计算失败率 */
+        private Integer minimumNumberOfCalls;
+        /** HALF_OPEN 时允许试探的并发数 */
+        private Integer permittedCallsInHalfOpen;
+        /** OPEN 状态等待秒数 */
+        private Integer waitDurationOpenSeconds;
+        /** 失败率阈值（0-100） */
+        private Float failureRateThreshold;
+    }
 
     /**
      * 回调配置

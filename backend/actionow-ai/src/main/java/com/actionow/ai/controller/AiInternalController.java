@@ -16,6 +16,7 @@ import com.actionow.ai.plugin.model.PluginExecutionRequest;
 import com.actionow.ai.plugin.model.PluginExecutionResult;
 import com.actionow.ai.plugin.model.PluginStreamEvent;
 import com.actionow.ai.plugin.model.ResponseMode;
+import com.actionow.ai.plugin.queue.ProviderInvocationFacade;
 import com.actionow.ai.pricing.CreditCalculator;
 import com.actionow.ai.service.AssetInputResolver;
 import com.actionow.ai.service.ModelProviderService;
@@ -58,6 +59,7 @@ public class AiInternalController {
     private final ModelProviderService modelProviderService;
     private final LlmProviderService llmProviderService;
     private final PluginExecutor pluginExecutor;
+    private final ProviderInvocationFacade invocationFacade;
     private final ModelProviderExecutionMapper executionMapper;
     private final AssetInputResolver assetInputResolver;
     private final ObjectMapper objectMapper;
@@ -124,9 +126,17 @@ public class AiInternalController {
             // 创建执行记录
             execution = createExecutionRecord(executionId, provider, request, responseMode, inputs);
 
-            // 执行 - 使用 pluginType (如 GROOVY) 而非 pluginId (如 seedream-4-0) 查找插件
-            PluginExecutionResult result = pluginExecutor.execute(
-                    provider.getPluginType().toLowerCase(), pluginConfig, execRequest);
+            // 执行 — IMAGE/VIDEO/AUDIO 阻塞型走 RabbitMQ 队列削峰，避免上千并发把
+            // Tomcat 线程池打爆；其它（CALLBACK/POLLING/TEXT）继续直连
+            PluginExecutionResult result;
+            if (shouldRouteThroughQueue(provider, responseMode)) {
+                log.info("[AI] routing through invocation queue: provider={} type={}",
+                        provider.getId(), provider.getProviderType());
+                result = invocationFacade.submitAndAwait(provider.getId(), execRequest, null);
+            } else {
+                result = pluginExecutor.execute(
+                        provider.getPluginType().toLowerCase(), pluginConfig, execRequest);
+            }
 
             // 更新执行记录
             updateExecutionRecord(execution, result);
@@ -323,6 +333,23 @@ public class AiInternalController {
 
         // 默认阻塞
         return ResponseMode.BLOCKING;
+    }
+
+    /**
+     * 判断该次执行是否应该走 RabbitMQ 队列。
+     * 仅对长耗时阻塞型（IMAGE/VIDEO/AUDIO + BLOCKING 模式）启用队列削峰；
+     * 其它模式（POLLING/CALLBACK）本身已经异步，TEXT 类延迟低也不需要排队。
+     */
+    private boolean shouldRouteThroughQueue(ModelProvider provider, ResponseMode mode) {
+        if (mode != ResponseMode.BLOCKING) {
+            return false;
+        }
+        String type = provider.getProviderType();
+        if (type == null) {
+            return false;
+        }
+        String upper = type.toUpperCase();
+        return "IMAGE".equals(upper) || "VIDEO".equals(upper) || "AUDIO".equals(upper);
     }
 
     /**

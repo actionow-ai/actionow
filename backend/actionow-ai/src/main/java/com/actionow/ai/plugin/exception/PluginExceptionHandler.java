@@ -5,7 +5,9 @@ import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.ratelimiter.RequestNotPermitted;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -85,14 +87,37 @@ public class PluginExceptionHandler {
     }
 
     /**
-     * 处理熔断异常
+     * 处理熔断异常。
+     * - HALF_OPEN：返回 503 + Retry-After 短延迟，告知客户端立即重试
+     * - OPEN / FORCED_OPEN：返回 503 + Retry-After 长延迟（wait_open_seconds）
+     * - 未识别 (CallNotPermittedException 直达此处)：按 OPEN 处理
      */
     @ExceptionHandler({PluginCircuitBreakerException.class, CallNotPermittedException.class})
-    @ResponseStatus(HttpStatus.SERVICE_UNAVAILABLE)
-    public Result<Void> handleCircuitBreakerException(Exception e) {
-        log.warn("Circuit breaker open: {}", e.getMessage());
-        String message = e instanceof PluginCircuitBreakerException pe ? pe.getMessage() : "服务暂时不可用，请稍后重试";
-        return Result.fail("CIRCUIT_BREAKER_OPEN", message);
+    public ResponseEntity<Result<Void>> handleCircuitBreakerException(Exception e) {
+        String state;
+        int retryAfter;
+        String errorCode;
+        String message;
+        if (e instanceof PluginCircuitBreakerException pe) {
+            state = pe.getState();
+            retryAfter = pe.getRetryAfterSeconds();
+            errorCode = pe.getErrorCode();
+            message = pe.getMessage();
+        } else {
+            String msg = e.getMessage();
+            state = (msg != null && msg.contains("HALF_OPEN")) ? "HALF_OPEN" : "OPEN";
+            retryAfter = "HALF_OPEN".equals(state) ? 2 : 30;
+            errorCode = "CIRCUIT_BREAKER_" + state;
+            message = "HALF_OPEN".equals(state)
+                ? "服务正在恢复中，请稍后立即重试"
+                : "服务暂时不可用，请稍后重试";
+        }
+        log.warn("Circuit breaker rejected: state={}, retryAfter={}s, msg={}", state, retryAfter, e.getMessage());
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(HttpHeaders.RETRY_AFTER, String.valueOf(retryAfter));
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+            .headers(headers)
+            .body(Result.fail(errorCode, message));
     }
 
     /**

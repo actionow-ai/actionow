@@ -185,6 +185,14 @@ public class ModelProviderResponse {
      */
     private Map<String, String> customHeaders;
 
+    // ========== 调用队列配置 ==========
+
+    /** RabbitMQ 队列名；NULL 走全局默认 */
+    private String queueName;
+    private Integer queueConcurrency;
+    private Integer queuePrefetch;
+    private Integer queueMaxLength;
+
     // ========== 同步状态 ==========
 
     private LocalDateTime lastSyncedAt;
@@ -279,6 +287,11 @@ public class ModelProviderResponse {
             .enabled(entity.getEnabled())
             .visibility(entity.getVisibility())
             .customHeaders(entity.getCustomHeaders())
+            // 队列配置
+            .queueName(entity.getQueueName())
+            .queueConcurrency(entity.getQueueConcurrency())
+            .queuePrefetch(entity.getQueuePrefetch())
+            .queueMaxLength(entity.getQueueMaxLength())
             // 同步状态
             .lastSyncedAt(entity.getLastSyncedAt())
             .syncStatus(entity.getSyncStatus())

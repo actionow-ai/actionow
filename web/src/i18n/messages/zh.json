@@ -1671,6 +1671,18 @@
         "IMAGE": "图片",
         "VIDEO": "视频",
         "AUDIO": "音频"
+      },
+      "queue": {
+        "title": "调用队列",
+        "description": "生图/视频等长耗时调用走 RabbitMQ 队列削峰。留空使用全局默认队列；自定义队列可独立设置 worker 并发与背压上限。",
+        "queueName": "队列名",
+        "queueNamePlaceholder": "留空 = 走全局默认（runtime.ai.queue_default_name）",
+        "concurrency": "消费者并发",
+        "concurrencyPlaceholder": "默认 20",
+        "prefetch": "Prefetch",
+        "prefetchPlaceholder": "默认 20",
+        "maxLength": "队列最大积压（背压上限）",
+        "maxLengthPlaceholder": "默认 5000；超过即对入队请求返回 503 + Retry-After"
       }
     }
   }

@@ -213,4 +213,15 @@ public class CreateModelProviderRequest {
      * 自定义请求头
      */
     private Map<String, String> customHeaders;
+
+    // ========== 调用队列配置（可选；未配置则走全局默认队列） ==========
+
+    /** RabbitMQ 队列名 */
+    private String queueName;
+    /** 消费者并发数 */
+    private Integer queueConcurrency;
+    /** consumer prefetch */
+    private Integer queuePrefetch;
+    /** 队列最大积压消息数（背压上限） */
+    private Integer queueMaxLength;
 }

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { useParams, useRouter } from "next/navigation";
-import { useLocale } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import {
   Button,
   Chip,
@@ -38,6 +38,7 @@ import {
   Layers,
   Lock,
   MessageSquareText,
+  Network,
   Pencil,
   Save,
   Settings2,
@@ -285,6 +286,7 @@ function SelectableCard(props: SelectableCardProps) {
 
 export default function AiModelEditPage() {
   const locale = useLocale();
+  const tQueue = useTranslations("admin.model.queue");
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const id = Array.isArray(params.id) ? params.id[0] : params.id;
@@ -350,6 +352,12 @@ export default function AiModelEditPage() {
   const [timeoutMs, setTimeoutMs] = useState("60000");
   const [maxRetries, setMaxRetries] = useState("2");
   const [rateLimit, setRateLimit] = useState("");
+
+  // ── Invocation Queue (per-provider RabbitMQ; 留空走全局默认)
+  const [queueName, setQueueName] = useState("");
+  const [queueConcurrency, setQueueConcurrency] = useState("");
+  const [queuePrefetch, setQueuePrefetch] = useState("");
+  const [queueMaxLength, setQueueMaxLength] = useState("");
 
   // ── Billing
   const [billingMode, setBillingMode] = useState<BillingMode>("static");
@@ -505,6 +513,12 @@ export default function AiModelEditPage() {
         setMaxRetries(String(d.maxRetries ?? 2));
         setRateLimit(d.rateLimit ? String(d.rateLimit) : "");
 
+        // 队列配置：null/undefined 显示为空 → 走全局默认
+        setQueueName(d.queueName ?? "");
+        setQueueConcurrency(d.queueConcurrency != null ? String(d.queueConcurrency) : "");
+        setQueuePrefetch(d.queuePrefetch != null ? String(d.queuePrefetch) : "");
+        setQueueMaxLength(d.queueMaxLength != null ? String(d.queueMaxLength) : "");
+
         if (d.pricingScript) {
           setBillingMode("groovy");
           setPricingScript(d.pricingScript);
@@ -611,6 +625,11 @@ export default function AiModelEditPage() {
       timeout: timeoutMs.trim() ? Number(timeoutMs) : undefined,
       maxRetries: maxRetries.trim() ? Number(maxRetries) : undefined,
       rateLimit: rateLimit.trim() ? Number(rateLimit) : undefined,
+      // 队列配置：trim 后为空 → undefined，让后端按"未提交"处理（保持原值或走全局默认）
+      queueName: queueName.trim() ? queueName.trim() : undefined,
+      queueConcurrency: queueConcurrency.trim() ? Number(queueConcurrency) : undefined,
+      queuePrefetch: queuePrefetch.trim() ? Number(queuePrefetch) : undefined,
+      queueMaxLength: queueMaxLength.trim() ? Number(queueMaxLength) : undefined,
       pricingRules: billingMode === "structured" ? parsedPricingRules : undefined,
       pricingScript: billingMode === "groovy" ? pricingScript.trim() || undefined : undefined,
       supportsBlocking,
@@ -1567,6 +1586,55 @@ export default function AiModelEditPage() {
                 value={rateLimit}
                 onChange={(e) => setRateLimit(e.target.value)}
                 placeholder="不限"
+              />
+            </TextField>
+          </div>
+        </section>
+
+        <Divider />
+
+        {/* ── 调用队列（per-provider RabbitMQ）── */}
+        <section>
+          <SectionLabel
+            icon={Network}
+            title={tQueue("title")}
+            iconCls="bg-cyan-50 text-cyan-600 dark:bg-cyan-950/40 dark:text-cyan-400"
+          />
+          <p className="text-[10px] text-muted mb-2">{tQueue("description")}</p>
+          <div className="grid grid-cols-2 gap-2">
+            <TextField className="col-span-2">
+              <Label className="text-xs">{tQueue("queueName")}</Label>
+              <Input
+                value={queueName}
+                onChange={(e) => setQueueName(e.target.value)}
+                placeholder={tQueue("queueNamePlaceholder")}
+              />
+            </TextField>
+            <TextField>
+              <Label className="text-xs">{tQueue("concurrency")}</Label>
+              <Input
+                type="number"
+                value={queueConcurrency}
+                onChange={(e) => setQueueConcurrency(e.target.value)}
+                placeholder={tQueue("concurrencyPlaceholder")}
+              />
+            </TextField>
+            <TextField>
+              <Label className="text-xs">{tQueue("prefetch")}</Label>
+              <Input
+                type="number"
+                value={queuePrefetch}
+                onChange={(e) => setQueuePrefetch(e.target.value)}
+                placeholder={tQueue("prefetchPlaceholder")}
+              />
+            </TextField>
+            <TextField className="col-span-2">
+              <Label className="text-xs">{tQueue("maxLength")}</Label>
+              <Input
+                type="number"
+                value={queueMaxLength}
+                onChange={(e) => setQueueMaxLength(e.target.value)}
+                placeholder={tQueue("maxLengthPlaceholder")}
               />
             </TextField>
           </div>
