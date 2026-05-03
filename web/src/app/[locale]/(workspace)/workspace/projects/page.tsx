@@ -40,6 +40,7 @@ import { useWorkspace } from "@/components/providers/workspace-provider";
 import { useWebSocket, useWebSocketMessage } from "@/lib/websocket";
 import type { CollabUser } from "@/lib/websocket";
 import { ActiveUsersAvatarGroup } from "@/components/ui/active-users-avatar-group";
+import { UserChip } from "@/components/ui/user-chip";
 import { BackgroundRippleEffect } from "@/components/ui/background-ripple-effect";
 import { SpotlightOverlay } from "@/components/onboarding/spotlight-overlay";
 import { useOnboardingStore } from "@/lib/stores/onboarding-store";
@@ -116,7 +117,13 @@ const ProjectCard = memo(function ProjectCard({
       actions={actions}
       actionsLabel={t("card.more")}
       isActionPending={duplicatingId === project.id || archivingId === project.id}
-      footerLeft={<span>{project.createdByNickname || project.createdByUsername}</span>}
+      footerLeft={
+        <UserChip
+          userId={project.createdBy}
+          nickname={project.createdByNickname}
+          username={project.createdByUsername}
+        />
+      }
       footerRight={
         <>
           {activeUsers.length > 0 && (

@@ -124,6 +124,7 @@ function toProjectMaterialItem(
     publishedAt: null,
     publishNote: null,
     createdAt: entity.createdAt,
+    createdBy: entity.createdBy ?? null,
     createdByNickname: entity.createdByNickname ?? null,
     createdByUsername: entity.createdByUsername ?? null,
     scope: entity.scope,

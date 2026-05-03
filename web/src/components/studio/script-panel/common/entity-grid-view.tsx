@@ -21,15 +21,14 @@ import {
   FileVideo,
   FileAudio,
   File,
-  User as UserIcon,
   FileText,
   MessageSquare,
 } from "lucide-react";
 import NextImage from "@/components/ui/content-image";
 import { EntityCard, type EntityCardAction } from "@/components/ui/entity-card";
+import { UserChip } from "@/components/ui/user-chip";
 import { useTranslations } from "next-intl";
 import type { EntityItem } from "../types";
-import { StatusBadge } from "./status-badge";
 import { DeleteConfirmModal } from "./delete-confirm-modal";
 import { EmptyState } from "./empty-state";
 import { useDragDropActions, createAssetDragData, ASSET_DRAG_TYPE } from "@/lib/stores/drag-drop-store";
@@ -131,6 +130,8 @@ interface EntityGridViewProps {
   onFavorite?: (item: EntityItem) => void;
   onDownload?: (item: EntityItem) => void;
   draggable?: boolean;
+  /** Render cards in cover-only mode (no title, description, footer). */
+  mediaOnly?: boolean;
 }
 
 export function EntityGridView({
@@ -142,6 +143,7 @@ export function EntityGridView({
   onFavorite,
   onDownload,
   draggable = false,
+  mediaOnly = false,
 }: EntityGridViewProps) {
   const [deleteConfirm, setDeleteConfirm] = useState<EntityItem | null>(null);
   const t = useTranslations("workspace.studio.common");
@@ -309,18 +311,24 @@ export function EntityGridView({
             </span>
           ) : null;
 
-          // Top-right badge: status
-          const topRightBadge = item.status && !isGenerating && !isFailed ? (
-            <StatusBadge status={item.status} />
-          ) : null;
+          // Source-based card tint — AI_GENERATED cards get an accent
+          // outline so user-uploaded vs. AI-produced assets are
+          // visually distinguishable without a separate badge.
+          const sourceClass =
+            item.source === "AI_GENERATED"
+              ? "!border-accent/50"
+              : item.source === "EXTERNAL"
+              ? "!border-warning/40"
+              : "";
 
           // Footer
-          const authorName = item.createdByNickname || item.createdByUsername;
-          const footerLeft = authorName ? (
-            <span className="flex items-center gap-1 truncate">
-              <UserIcon className="size-3 shrink-0" />
-              <span className="truncate">{authorName}</span>
-            </span>
+          const hasAuthor = !!(item.createdByNickname || item.createdByUsername);
+          const footerLeft = hasAuthor ? (
+            <UserChip
+              userId={item.createdBy ?? undefined}
+              nickname={item.createdByNickname}
+              username={item.createdByUsername}
+            />
           ) : null;
           const footerRight =
             item.commentCount != null && item.commentCount > 0 ? (
@@ -352,11 +360,12 @@ export function EntityGridView({
                 coverSlot={coverSlot}
                 fallbackIcon={<Film className="size-12 text-muted/20" />}
                 topLeftBadge={topLeftBadge}
-                topRightBadge={topRightBadge}
                 actions={actions}
                 footerLeft={footerLeft}
                 footerRight={footerRight}
                 onClick={() => isInteractive && onSelect(item.id)}
+                mediaOnly={mediaOnly}
+                className={sourceClass}
               />
             </div>
           );

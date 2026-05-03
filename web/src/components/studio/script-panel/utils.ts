@@ -51,6 +51,9 @@ export function transformToEntityItem(
         description: ep.synopsis,
         status: ep.status,
         coverUrl: ep.coverUrl,
+        createdBy: ep.createdBy,
+        createdByNickname: ep.createdByNickname,
+        createdByUsername: ep.createdByUsername,
       };
     }
     case "storyboards": {
@@ -61,6 +64,7 @@ export function transformToEntityItem(
         description: sb.synopsis,
         status: sb.status,
         coverUrl: sb.coverUrl,
+        createdBy: sb.createdBy,
       };
     }
     case "characters": {
@@ -71,6 +75,9 @@ export function transformToEntityItem(
         description: chr.description,
         status: "DRAFT",
         coverUrl: chr.coverUrl,
+        createdBy: chr.createdBy,
+        createdByNickname: chr.createdByNickname,
+        createdByUsername: chr.createdByUsername,
       };
     }
     case "scenes": {
@@ -81,6 +88,9 @@ export function transformToEntityItem(
         description: scn.description,
         status: "DRAFT",
         coverUrl: scn.coverUrl,
+        createdBy: scn.createdBy,
+        createdByNickname: scn.createdByNickname,
+        createdByUsername: scn.createdByUsername,
       };
     }
     case "props": {
@@ -91,6 +101,9 @@ export function transformToEntityItem(
         description: prp.description,
         status: "DRAFT",
         coverUrl: prp.coverUrl,
+        createdBy: prp.createdBy,
+        createdByNickname: prp.createdByNickname,
+        createdByUsername: prp.createdByUsername,
       };
     }
     case "assets": {
@@ -112,6 +125,7 @@ export function transformToEntityItem(
         mimeType: ast.mimeType || undefined,
         fileSize: ast.fileSize || undefined,
         generationStatus: ast.generationStatus,
+        createdBy: ast.createdBy,
         createdByNickname: ast.createdByNickname,
         createdByUsername: ast.createdByUsername,
       };

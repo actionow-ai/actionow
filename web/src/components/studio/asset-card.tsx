@@ -77,6 +77,38 @@ function getAssetTypeInfo(type: AssetType): { icon: typeof ImageIcon; labelKey: 
   }
 }
 
+/**
+ * Thumbnail with skeleton + fade-in + onError fallback. Used inside
+ * AssetThumbnail so list views don't show flashing broken images.
+ */
+function ThumbWithSkeleton({ src, alt }: { src: string; alt: string }) {
+  const [loaded, setLoaded] = useState(false);
+  const [errored, setErrored] = useState(false);
+
+  if (errored) {
+    return (
+      <div className="flex size-full items-center justify-center bg-muted/20">
+        <ImageIcon className="size-6 text-muted/40" />
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {!loaded && <div className="absolute inset-0 animate-pulse bg-surface-2" />}
+      <img
+        src={src}
+        alt={alt}
+        loading="lazy"
+        decoding="async"
+        onLoad={() => setLoaded(true)}
+        onError={() => setErrored(true)}
+        className={`size-full object-cover transition-[transform,opacity] duration-200 group-hover:scale-105 ${loaded ? "opacity-100" : "opacity-0"}`}
+      />
+    </>
+  );
+}
+
 // Asset thumbnail component
 function AssetThumbnail({
   asset,
@@ -99,12 +131,11 @@ function AssetThumbnail({
 
   return (
     <div className="relative size-full">
-      {/* Thumbnail Image */}
+      {/* Thumbnail Image with skeleton + fade-in */}
       {asset.thumbnailUrl || asset.fileUrl ? (
-        <img
+        <ThumbWithSkeleton
           src={asset.thumbnailUrl || asset.fileUrl || ""}
           alt={asset.name}
-          className="size-full object-cover transition-transform group-hover:scale-105"
         />
       ) : asset.assetType === "VIDEO" ? (
         <div className="flex size-full items-center justify-center bg-muted/20">
@@ -230,7 +261,7 @@ export function AssetCard({
   return (
     <div className="group relative">
       <div
-        className={`relative cursor-pointer overflow-hidden rounded-lg border border-border/50 bg-muted/5 transition-all hover:border-accent/50 hover:shadow-md ${
+        className={`relative isolate cursor-pointer overflow-hidden rounded-2xl border border-white/10 bg-white/60 shadow-sm backdrop-blur-xl transition-all duration-200 hover:shadow-md dark:bg-white/5 ${
           draggable ? "cursor-grab active:cursor-grabbing" : ""
         }`}
         onClick={handlePreview}

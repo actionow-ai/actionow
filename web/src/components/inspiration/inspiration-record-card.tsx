@@ -9,6 +9,7 @@ import {
   AssetPreviewModal,
   type AssetPreviewInfo,
 } from "@/components/common/asset-preview-modal";
+import { EntityCard, type EntityCardAction } from "@/components/ui/entity-card";
 
 // ── Shared utilities ──
 
@@ -104,187 +105,196 @@ interface MasonryAssetCardProps {
   onDelete?: (recordId: string) => void;
 }
 
+// ── Shared building blocks ──
+
+function GenTypeBadge({ type }: { type: string }) {
+  return (
+    <div className="flex items-center gap-1 rounded-md bg-black/40 px-1.5 py-0.5 text-[10px] text-white backdrop-blur-sm">
+      <GenTypeIcon type={type} />
+    </div>
+  );
+}
+
+function ProviderTimeMeta({ record }: { record: InspirationRecordDTO }) {
+  return (
+    <>
+      {record.providerIconUrl ? (
+        <img src={record.providerIconUrl} alt="" className="size-3 rounded" />
+      ) : (
+        <Bot className="size-3" />
+      )}
+      <span className="max-w-[90px] truncate">{record.providerName}</span>
+      <span className="text-border">·</span>
+      <Clock className="size-2.5" />
+      <span>{formatTime(record.createdAt)}</span>
+      {record.creditCost > 0 && (
+        <>
+          <span className="text-border">·</span>
+          <span className="flex items-center gap-0.5 text-warning">
+            <Zap className="size-2.5" />
+            {record.creditCost}
+          </span>
+        </>
+      )}
+    </>
+  );
+}
+
+function ParamsAndRefAssets({
+  record,
+  displayParams,
+}: {
+  record: InspirationRecordDTO;
+  displayParams: Array<[string, unknown]>;
+}) {
+  if (displayParams.length === 0 && (!record.refAssets || record.refAssets.length === 0)) {
+    return null;
+  }
+  return (
+    <>
+      {displayParams.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {displayParams.map(([k, v]) => (
+            <span
+              key={k}
+              className="inline-flex rounded-md bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted"
+            >
+              {k.replace(/_/g, " ")}: {String(v)}
+            </span>
+          ))}
+        </div>
+      )}
+      {record.refAssets?.length > 0 && (
+        <div className="mt-1 flex items-center gap-1">
+          <Paperclip className="size-2.5 text-muted" />
+          {record.refAssets.slice(0, 4).map((ref) => (
+            <Tooltip key={ref.id} delay={200}>
+              <Tooltip.Trigger>
+                <div className="size-5 shrink-0 overflow-hidden border border-border/50">
+                  {ref.assetType === "IMAGE" ? (
+                    <img
+                      src={ref.thumbnailUrl || ref.url}
+                      alt=""
+                      className="size-full object-cover"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <RefAssetMiniIcon type={ref.assetType} />
+                  )}
+                </div>
+              </Tooltip.Trigger>
+              <Tooltip.Content className="max-w-none overflow-hidden border-none bg-transparent p-0 shadow-none">
+                {ref.assetType === "IMAGE" ? (
+                  <img
+                    src={ref.url}
+                    alt=""
+                    className="block max-h-52 max-w-52 object-contain"
+                  />
+                ) : (
+                  <div className="px-3 py-2 text-xs">
+                    {ref.mimeType || ref.assetType}
+                  </div>
+                )}
+              </Tooltip.Content>
+            </Tooltip>
+          ))}
+          {record.refAssets.length > 4 && (
+            <span className="text-[10px] text-muted">
+              +{record.refAssets.length - 4}
+            </span>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
 export function MasonryAssetCard({ item, onRetry, onDelete }: MasonryAssetCardProps) {
+  const t = useTranslations("workspace.inspiration.record");
   const { asset, record } = item;
   const [previewAsset, setPreviewAsset] = useState<AssetPreviewInfo | null>(null);
 
   const isTerminal = record.status === "COMPLETED" || record.status === "FAILED";
   const displayParams = useMemo(() => getDisplayParams(record.params), [record.params]);
 
-  return (
-    <>
-      <div
-        className="pointer-events-auto group cursor-pointer overflow-hidden rounded-3xl border border-white/10 bg-white/60 shadow-sm backdrop-blur-xl transition-shadow hover:shadow-md dark:bg-white/5"
-        draggable
-        onDragStart={(e) => handleDragStart(asset, e)}
-        onClick={() => setPreviewAsset(toPreviewInfo(asset))}
-      >
-        {/* Media — natural aspect ratio */}
-        <div className="relative overflow-hidden">
-          {asset.assetType === "IMAGE" && (
-            <img
-              src={asset.thumbnailUrl || asset.url}
-              alt=""
-              className="block w-full"
-              loading="lazy"
-            />
-          )}
-          {asset.assetType === "VIDEO" && (
-            <>
-              <video
-                src={asset.url}
-                className="block w-full"
-                preload="metadata"
-                muted
-              />
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="flex size-10 items-center justify-center rounded-full bg-black/50 text-white">
-                  <svg className="size-5 fill-current" viewBox="0 0 24 24">
-                    <path d="M8 5v14l11-7z" />
-                  </svg>
-                </div>
-              </div>
-            </>
-          )}
-          {asset.assetType === "AUDIO" && (
-            <div className="flex items-center gap-3 p-5">
-              <Music className="size-8 shrink-0 text-accent" />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-xs text-foreground-2">
-                  {asset.mimeType || "Audio"}
-                </p>
-                {asset.duration != null && (
-                  <p className="text-[10px] text-muted">
-                    {Math.round(asset.duration)}s
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
+  // Compute aspect ratio from asset dimensions to prevent layout shift
+  // (InspirationAssetDTO already exposes width/height on the backend).
+  const aspectRatio =
+    asset.width && asset.height ? asset.width / asset.height : undefined;
 
-          {/* Top-right action buttons (hover) */}
-          <div className="absolute right-1.5 top-1.5 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-            {record.status === "FAILED" && onRetry && (
-              <Button
-                isIconOnly
-                variant="ghost"
-                size="sm"
-                className="size-6 bg-black/40 text-white backdrop-blur-sm hover:bg-black/60"
-                onPress={() => onRetry(record.id)}
-              >
-                <RefreshCw className="size-3" />
-              </Button>
-            )}
-            {isTerminal && onDelete && (
-              <Button
-                isIconOnly
-                variant="ghost"
-                size="sm"
-                className="size-6 bg-black/40 text-white backdrop-blur-sm hover:bg-black/60"
-                onPress={() => onDelete(record.id)}
-              >
-                <Trash2 className="size-3" />
-              </Button>
-            )}
-          </div>
-
-          {/* Top-left generation type badge (always visible) */}
-          <div className="absolute left-1.5 top-1.5">
-            <div className="flex items-center gap-1 rounded-md bg-black/40 px-1.5 py-0.5 text-[10px] text-white backdrop-blur-sm">
-              <GenTypeIcon type={record.generationType} />
-            </div>
-          </div>
-        </div>
-
-        {/* Card footer — always visible info */}
-        <div className="space-y-1.5 p-2.5">
-          {/* Prompt */}
-          <p className="line-clamp-2 text-xs leading-relaxed text-foreground">
-            {record.prompt}
-          </p>
-
-          {/* Provider + time row */}
-          <div className="flex items-center gap-1.5 text-[10px] text-muted">
-            {record.providerIconUrl ? (
-              <img src={record.providerIconUrl} alt="" className="size-3 rounded" />
-            ) : (
-              <Bot className="size-3" />
-            )}
-            <span className="max-w-[90px] truncate">{record.providerName}</span>
-            <span className="text-border">·</span>
-            <Clock className="size-2.5" />
-            <span>{formatTime(record.createdAt)}</span>
-            {record.creditCost > 0 && (
-              <>
-                <span className="text-border">·</span>
-                <span className="flex items-center gap-0.5 text-warning">
-                  <Zap className="size-2.5" />
-                  {record.creditCost}
-                </span>
-              </>
-            )}
-          </div>
-
-          {/* Params + refAssets — collapsed, visible on hover */}
-          <div className="max-h-0 overflow-hidden transition-all duration-200 group-hover:max-h-24">
-            {/* Params tags */}
-            {displayParams.length > 0 && (
-              <div className="flex flex-wrap gap-1 pt-1">
-                {displayParams.map(([k, v]) => (
-                  <span
-                    key={k}
-                    className="inline-flex rounded-md bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted"
-                  >
-                    {k.replace(/_/g, " ")}: {String(v)}
-                  </span>
-                ))}
-              </div>
-            )}
-
-            {/* Ref asset thumbnails — hover to preview large */}
-            {record.refAssets?.length > 0 && (
-              <div className="mt-1 flex items-center gap-1">
-                <Paperclip className="size-2.5 text-muted" />
-                {record.refAssets.slice(0, 4).map((ref) => (
-                  <Tooltip key={ref.id} delay={200}>
-                    <Tooltip.Trigger>
-                      <div className="size-5 shrink-0 overflow-hidden border border-border/50">
-                        {ref.assetType === "IMAGE" ? (
-                          <img
-                            src={ref.thumbnailUrl || ref.url}
-                            alt=""
-                            className="size-full object-cover"
-                            loading="lazy"
-                          />
-                        ) : (
-                          <RefAssetMiniIcon type={ref.assetType} />
-                        )}
-                      </div>
-                    </Tooltip.Trigger>
-                    <Tooltip.Content className="max-w-none overflow-hidden border-none bg-transparent p-0 shadow-none">
-                      {ref.assetType === "IMAGE" ? (
-                        <img
-                          src={ref.url}
-                          alt=""
-                          className="block max-h-52 max-w-52 object-contain"
-                        />
-                      ) : (
-                        <div className="px-3 py-2 text-xs">
-                          {ref.mimeType || ref.assetType}
-                        </div>
-                      )}
-                    </Tooltip.Content>
-                  </Tooltip>
-                ))}
-                {record.refAssets.length > 4 && (
-                  <span className="text-[10px] text-muted">+{record.refAssets.length - 4}</span>
-                )}
-              </div>
-            )}
+  // For video / audio we use a custom coverSlot; image uses EntityCard's
+  // built-in cover (with skeleton + fade-in).
+  const coverSlot =
+    asset.assetType === "VIDEO" ? (
+      <div className="relative size-full">
+        <video
+          src={asset.url}
+          className="block size-full object-cover"
+          preload="metadata"
+          muted
+        />
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="flex size-10 items-center justify-center rounded-full bg-black/50 text-white">
+            <svg className="size-5 fill-current" viewBox="0 0 24 24">
+              <path d="M8 5v14l11-7z" />
+            </svg>
           </div>
         </div>
       </div>
+    ) : asset.assetType === "AUDIO" ? (
+      <div className="flex size-full items-center gap-3 p-5">
+        <Music className="size-8 shrink-0 text-accent" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-xs text-foreground-2">
+            {asset.mimeType || "Audio"}
+          </p>
+          {asset.duration != null && (
+            <p className="text-[10px] text-muted">
+              {Math.round(asset.duration)}s
+            </p>
+          )}
+        </div>
+      </div>
+    ) : undefined;
 
+  const actions: EntityCardAction[] = [];
+  if (record.status === "FAILED" && onRetry) {
+    actions.push({
+      id: "retry",
+      label: t("retry"),
+      icon: RefreshCw,
+      onAction: () => onRetry(record.id),
+    });
+  }
+  if (isTerminal && onDelete) {
+    actions.push({
+      id: "delete",
+      label: t("delete"),
+      icon: Trash2,
+      variant: "danger",
+      separatorBefore: actions.length > 0,
+      onAction: () => onDelete(record.id),
+    });
+  }
+
+  return (
+    <>
+      <EntityCard
+        title={record.prompt}
+        titleLines={2}
+        coverUrl={asset.assetType === "IMAGE" ? asset.thumbnailUrl || asset.url : undefined}
+        coverSlot={coverSlot}
+        variant="masonry"
+        aspectRatio={aspectRatio}
+        topLeftBadge={<GenTypeBadge type={record.generationType} />}
+        meta={<ProviderTimeMeta record={record} />}
+        expandableDetails={
+          <ParamsAndRefAssets record={record} displayParams={displayParams} />
+        }
+        actions={actions.length > 0 ? actions : undefined}
+        onClick={() => setPreviewAsset(toPreviewInfo(asset))}
+        onDragStart={(e) => handleDragStart(asset, e)}
+      />
       <AssetPreviewModal
         isOpen={!!previewAsset}
         onOpenChange={(open) => { if (!open) setPreviewAsset(null); }}

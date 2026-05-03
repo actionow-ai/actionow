@@ -787,6 +787,7 @@ export function AssetTab({ scriptId }: AssetTabProps) {
                   onSelect={handleSelect}
                   onDelete={handleDelete}
                   draggable
+                  mediaOnly
                 />
               </ScrollShadow>
             )}

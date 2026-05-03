@@ -13,6 +13,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { EntityCard, EntityCardSkeleton, type EntityCardAction } from "@/components/ui/entity-card";
+import { UserChip } from "@/components/ui/user-chip";
 import type { EntityType } from "./material-sidebar";
 import type { LibraryAssetType, SystemLibraryScope } from "@/lib/api/dto";
 
@@ -24,6 +25,7 @@ export interface MaterialItem {
   publishedAt: string | null;
   publishNote: string | null;
   createdAt?: string | null;
+  createdBy?: string | null;
   createdByNickname?: string | null;
   createdByUsername?: string | null;
   // Asset-specific fields
@@ -179,15 +181,21 @@ export function MaterialCard({
     ) : undefined;
 
   // Footer — mirrors project card rhythm:
-  //   left  = author nickname (fallback username) OR file size for assets
+  //   left  = UserChip (author) OR file size for assets without author
   //   right = createdAt (fallback publishedAt)
-  const authorName = item.createdByNickname || item.createdByUsername || null;
+  const hasAuthor = !!(item.createdByNickname || item.createdByUsername);
   const footerLeft = (() => {
+    if (hasAuthor) {
+      return (
+        <UserChip
+          userId={item.createdBy ?? undefined}
+          nickname={item.createdByNickname}
+          username={item.createdByUsername}
+        />
+      );
+    }
     if (entityType === "assets" && item.fileSize) {
       return <span>{formatFileSize(item.fileSize)}</span>;
-    }
-    if (authorName) {
-      return <span className="truncate">{authorName}</span>;
     }
     return null;
   })();

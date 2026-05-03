@@ -7,18 +7,16 @@
  * Clicking opens asset detail modal (Gallery style), edit button opens image editor
  */
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useMemo } from "react";
 import dynamic from "next/dynamic";
-import { Spinner, Tooltip, Button, toast} from "@heroui/react";
+import { Spinner, Button, toast } from "@heroui/react";
 import {
-  GripVertical,
   Trash2,
   Download,
   X,
   Image as ImageIcon,
   Play,
   Music,
-  RefreshCw,
   Edit3,
   BadgeCheck,
   CircleDashed,
@@ -30,12 +28,46 @@ import type { EntityAssetRelationDTO } from "@/lib/api/dto";
 import { projectService } from "@/lib/api/services";
 import { useLocale } from "next-intl";
 import { getErrorFromException } from "@/lib/api";
+import { UserChip } from "@/components/ui/user-chip";
+import { EntityCard, type EntityCardAction } from "@/components/ui/entity-card";
 
 // Dynamic import to avoid SSR issues with canvas dependency
 const ImageEditorModal = dynamic(
   () => import("@/components/common/image-editor/image-editor-modal").then(mod => mod.ImageEditorModal),
   { ssr: false }
 );
+
+/**
+ * Image with skeleton loader and fade-in. Falls back to a neutral icon
+ * placeholder on error so we never show a broken image.
+ */
+function ImageWithSkeleton({ src, alt }: { src: string; alt: string }) {
+  const [loaded, setLoaded] = useState(false);
+  const [errored, setErrored] = useState(false);
+
+  if (errored) {
+    return (
+      <div className="flex size-full items-center justify-center bg-muted/20">
+        <ImageIcon className="size-6 text-muted/30" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative size-full">
+      {!loaded && <div className="absolute inset-0 animate-pulse bg-surface-2" />}
+      <img
+        src={src}
+        alt={alt}
+        loading="lazy"
+        decoding="async"
+        onLoad={() => setLoaded(true)}
+        onError={() => setErrored(true)}
+        className={`size-full object-cover transition-opacity duration-200 ${loaded ? "opacity-100" : "opacity-0"}`}
+      />
+    </div>
+  );
+}
 
 interface AssetCardProps {
   relation: EntityAssetRelationDTO;
@@ -184,41 +216,19 @@ export function AssetCard({
     }
   };
 
-  // Click card to show detail modal
-  const handleCardClick = (e: React.MouseEvent) => {
-    if (!isGenerating && !isFailed) {
-      setIsDetailOpen(true);
+  const handleDownload = () => {
+    if (!relation.asset.fileUrl) return;
+    if (onDownload) {
+      onDownload(relation);
+      return;
     }
-  };
-
-  // Click edit button to open image editor
-  const handleEditClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (assetType === "IMAGE" && relation.asset.fileUrl && !isGenerating && !isFailed) {
-      setIsEditorOpen(true);
-    }
-  };
-
-  const handleDownload = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (relation.asset.fileUrl) {
-      if (onDownload) {
-        onDownload(relation);
-      } else {
-        // Default download behavior - download file directly
-        const link = document.createElement("a");
-        link.href = relation.asset.fileUrl;
-        link.download = relation.asset.name || "download";
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      }
-    }
-  };
-
-  const handleDelete = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    onDelete?.(relation.id);
+    // Default download behavior — pull the file via a temp anchor.
+    const link = document.createElement("a");
+    link.href = relation.asset.fileUrl;
+    link.download = relation.asset.name || "download";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const handleSaveFromEditor = async (dataUrl: string) => {
@@ -255,10 +265,9 @@ export function AssetCard({
   const renderAssetContent = () => {
     if (assetType === "IMAGE") {
       return relation.asset.fileUrl ? (
-        <img
+        <ImageWithSkeleton
           src={relation.asset.fileUrl}
           alt={relation.asset.name}
-          className="size-full object-cover"
         />
       ) : (
         <div className="flex size-full items-center justify-center bg-muted/20">
@@ -305,186 +314,103 @@ export function AssetCard({
     );
   };
 
+  // Cover slot — renders the underlying asset (image / video / audio /
+  // fallback) plus the bottom-left creator chip overlay.
+  const coverSlot = (
+    <>
+      {renderAssetContent()}
+      {!isGenerating && !isFailed && (relation.asset.createdByNickname || relation.asset.createdByUsername) && (
+        <div className="absolute bottom-2 left-2 z-10">
+          <UserChip
+            userId={relation.asset.createdBy ?? undefined}
+            nickname={relation.asset.createdByNickname}
+            username={relation.asset.createdByUsername}
+            size="xs"
+            showName
+            className="text-white"
+          />
+        </div>
+      )}
+    </>
+  );
+
+  // Generating / failed full-cover overlay (replaces actions when active).
+  const statusOverlay = isGenerating ? (
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60">
+      <Spinner size="sm" className="text-white" />
+      <span className="text-[10px] text-white">生成中...</span>
+    </div>
+  ) : isFailed ? (
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-danger/60">
+      <X className="size-4 text-white" />
+      <span className="text-[10px] text-white">生成失败</span>
+    </div>
+  ) : undefined;
+
+  // Action toolbar — only shown in normal interactive state. Generating /
+  // failed states keep just the delete action so the user can clean up.
+  const actions: EntityCardAction[] = [];
+  if (!isGenerating && !isFailed) {
+    if (assetType === "IMAGE" && relation.asset.fileUrl) {
+      actions.push({
+        id: "edit",
+        label: "编辑",
+        icon: Edit3,
+        onAction: () => setIsEditorOpen(true),
+      });
+    }
+    actions.push({
+      id: "togglePublish",
+      label: isUpdating
+        ? "更新中..."
+        : isOfficial
+          ? `设为草稿${isCover ? " (当前封面)" : ""}`
+          : "设为正式",
+      icon: isUpdating ? Loader2 : isOfficial ? BadgeCheck : CircleDashed,
+      onAction: () => {
+        if (!isUpdating) handleTogglePublish();
+      },
+    });
+    if (relation.asset.fileUrl) {
+      actions.push({
+        id: "download",
+        label: "下载",
+        icon: Download,
+        onAction: handleDownload,
+      });
+    }
+  }
+  if (onDelete) {
+    actions.push({
+      id: "delete",
+      label: "删除",
+      icon: Trash2,
+      variant: "danger",
+      separatorBefore: actions.length > 0,
+      onAction: () => onDelete(relation.id),
+    });
+  }
+
   return (
     <>
-      <div
-        className={`group relative aspect-video overflow-hidden rounded-lg bg-muted/10 ${
-          isGenerating ? "cursor-default" : "cursor-pointer"
-        } ${isOfficial ? "ring-2 ring-accent" : ""}`}
-        draggable={!isGenerating && !!onDragStart}
-        onClick={handleCardClick}
-        onDragStart={(e) => !isGenerating && onDragStart?.(e, relation)}
+      <EntityCard
+        mediaOnly
+        title={relation.asset.name}
+        coverSlot={coverSlot}
+        statusOverlay={statusOverlay}
+        actions={actions.length > 0 ? actions : undefined}
+        isActionPending={isUpdating}
+        onClick={!isGenerating && !isFailed ? () => setIsDetailOpen(true) : undefined}
+        onDragStart={
+          onDragStart && !isGenerating
+            ? (e) => onDragStart(e, relation)
+            : undefined
+        }
         onDragEnd={onDragEnd}
-      >
-        {/* Asset content */}
-        {renderAssetContent()}
-
-        {/* Top-left badge: Official */}
-        {isOfficial && !isGenerating && !isFailed && (
-          <div className="absolute left-1.5 top-1.5 z-10 flex w-fit items-center gap-1 rounded-md bg-accent px-1.5 py-0.5 text-[10px] font-medium text-accent-foreground">
-            <BadgeCheck className="size-3" />
-            正式
-          </div>
-        )}
-
-        {/* Bottom-left: Creator name */}
-        {!isGenerating && !isFailed && (relation.asset.createdByNickname || relation.asset.createdByUsername) && (
-          <div className="absolute bottom-1.5 left-1.5 z-10 flex w-fit items-center gap-1 rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] text-white backdrop-blur-sm">
-            {relation.asset.createdByNickname || relation.asset.createdByUsername}
-          </div>
-        )}
-
-        {/* Generating overlay */}
-        {isGenerating && (
-          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-black/60">
-            <Spinner size="sm" className="text-white" />
-            <span className="text-[10px] text-white">生成中...</span>
-            <Tooltip delay={0}>
-              <Tooltip.Trigger>
-                <div
-                  className="flex size-6 cursor-pointer items-center justify-center rounded-md bg-black/40 text-white backdrop-blur-sm transition-colors hover:bg-danger/80"
-                  onClick={handleDelete}
-                >
-                  <Trash2 className="size-3.5" />
-                </div>
-              </Tooltip.Trigger>
-              <Tooltip.Content placement="top">删除</Tooltip.Content>
-            </Tooltip>
-          </div>
-        )}
-
-        {/* Failed overlay with action buttons */}
-        {isFailed && (
-          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-danger/60">
-            <X className="size-4 text-white" />
-            <span className="text-[10px] text-white">生成失败</span>
-            <div className="flex items-center gap-1.5">
-              {/* Regenerate button (disabled) */}
-              <Tooltip delay={0}>
-                <Tooltip.Trigger>
-                  <div className="flex h-6 cursor-not-allowed items-center gap-1 rounded-md bg-black/40 px-2 text-white/50 backdrop-blur-sm">
-                    <RefreshCw className="size-3" />
-                    <span className="text-[10px]">重新生成</span>
-                  </div>
-                </Tooltip.Trigger>
-                <Tooltip.Content placement="top">暂时不可用</Tooltip.Content>
-              </Tooltip>
-
-              {/* Delete button */}
-              <Tooltip delay={0}>
-                <Tooltip.Trigger>
-                  <div
-                    className="flex size-6 cursor-pointer items-center justify-center rounded-md bg-black/40 text-white backdrop-blur-sm transition-colors hover:bg-danger/80"
-                    onClick={handleDelete}
-                  >
-                    <Trash2 className="size-3.5" />
-                  </div>
-                </Tooltip.Trigger>
-                <Tooltip.Content placement="top">删除</Tooltip.Content>
-              </Tooltip>
-            </div>
-          </div>
-        )}
-
-        {/* Hover overlay with action buttons */}
-        {!isGenerating && !isFailed && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
-            {/* Center - Action buttons row */}
-            <div className="flex items-center gap-1.5">
-              {/* Drag handle - for all draggable assets */}
-              {onDragStart && (
-                <Tooltip delay={0}>
-                  <Tooltip.Trigger>
-                    <div
-                      className="flex size-7 cursor-grab items-center justify-center rounded-md bg-black/60 text-white backdrop-blur-sm transition-colors hover:bg-accent/80 active:cursor-grabbing"
-                      onMouseDown={(e) => e.stopPropagation()}
-                    >
-                      <GripVertical className="size-4" />
-                    </div>
-                  </Tooltip.Trigger>
-                  <Tooltip.Content placement="top">拖拽到AI生成</Tooltip.Content>
-                </Tooltip>
-              )}
-
-              {/* Edit button for images */}
-              {assetType === "IMAGE" && relation.asset.fileUrl && (
-                <Tooltip delay={0}>
-                  <Tooltip.Trigger>
-                    <div
-                      className="flex size-7 cursor-pointer items-center justify-center rounded-md bg-black/60 text-white backdrop-blur-sm transition-colors hover:bg-accent/80"
-                      onClick={handleEditClick}
-                    >
-                      <Edit3 className="size-4" />
-                    </div>
-                  </Tooltip.Trigger>
-                  <Tooltip.Content placement="top">编辑</Tooltip.Content>
-                </Tooltip>
-              )}
-
-              {/* Publish/Unpublish button (OFFICIAL/DRAFT toggle) */}
-              <Tooltip delay={0}>
-                <Tooltip.Trigger>
-                  <div
-                    className={`flex size-7 items-center justify-center rounded-md backdrop-blur-sm transition-colors ${
-                      isUpdating
-                        ? "cursor-wait bg-black/60 text-white"
-                        : isOfficial
-                          ? "cursor-pointer bg-accent text-accent-foreground hover:bg-accent/80"
-                          : "cursor-pointer bg-black/60 text-white hover:bg-white/20"
-                    }`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (!isUpdating) {
-                        handleTogglePublish();
-                      }
-                    }}
-                  >
-                    {isUpdating ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : isOfficial ? (
-                      <BadgeCheck className="size-4" />
-                    ) : (
-                      <CircleDashed className="size-4" />
-                    )}
-                  </div>
-                </Tooltip.Trigger>
-                <Tooltip.Content placement="top">
-                  {isUpdating ? "更新中..." : isOfficial ? "设为草稿" : "设为正式"}
-                  {!isUpdating && isCover && isOfficial && " (当前封面)"}
-                </Tooltip.Content>
-              </Tooltip>
-
-              {/* Download button */}
-              {relation.asset.fileUrl && (
-                <Tooltip delay={0}>
-                  <Tooltip.Trigger>
-                    <div
-                      className="flex size-7 cursor-pointer items-center justify-center rounded-md bg-black/60 text-white backdrop-blur-sm transition-colors hover:bg-white/20"
-                      onClick={handleDownload}
-                    >
-                      <Download className="size-4" />
-                    </div>
-                  </Tooltip.Trigger>
-                  <Tooltip.Content placement="top">下载</Tooltip.Content>
-                </Tooltip>
-              )}
-
-              {/* Delete button */}
-              <Tooltip delay={0}>
-                <Tooltip.Trigger>
-                  <div
-                    className="flex size-7 cursor-pointer items-center justify-center rounded-md bg-black/60 text-white backdrop-blur-sm transition-colors hover:bg-danger/80"
-                    onClick={handleDelete}
-                  >
-                    <Trash2 className="size-4" />
-                  </div>
-                </Tooltip.Trigger>
-                <Tooltip.Content placement="top">删除</Tooltip.Content>
-              </Tooltip>
-            </div>
-          </div>
-        )}
-      </div>
+        // OFFICIAL gets an accent border tint; replaces the old
+        // `ring-2 ring-accent` so it uses EntityCard's border slot.
+        className={isOfficial ? "!border-accent/60" : ""}
+      />
 
       {/* Full-screen Image Editor Modal */}
       <ImageEditorModal

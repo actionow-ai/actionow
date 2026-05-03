@@ -45,6 +45,7 @@ export interface EntityItem {
   mimeType?: string;
   fileSize?: number;
   generationStatus?: GenerationStatus;
+  createdBy?: string | null;
   createdByNickname?: string | null;
   createdByUsername?: string | null;
   commentCount?: number;
