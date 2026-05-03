@@ -77,7 +77,7 @@ export function DynamicForm({
   const [exclusiveSelections, setExclusiveSelections] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {};
     for (const group of schema.exclusiveGroups) {
-      initial[group.name] = group.defaultOption || group.options[0]?.value || "";
+      initial[group.name] = group.defaultOption || group.options?.[0]?.value || "";
     }
     return initial;
   });

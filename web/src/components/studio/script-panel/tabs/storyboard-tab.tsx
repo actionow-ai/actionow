@@ -1042,7 +1042,7 @@ function StoryboardDetailContent({
                             </>
                           ) : (
                             <div className="flex size-full items-center justify-center bg-accent/10 text-xs font-medium text-accent">
-                              {char.characterName.charAt(0)}
+                              {char.characterName?.charAt(0) || "?"}
                             </div>
                           )}
                           <button
@@ -1556,7 +1556,7 @@ function StoryboardDetailContent({
                         <NextImage src={char.coverUrl} alt="" width={40} height={40} className="rounded-full object-cover" />
                       ) : (
                         <div className="flex size-10 items-center justify-center rounded-full bg-accent/10 text-sm font-medium text-accent">
-                          {char.name.charAt(0)}
+                          {char.name?.charAt(0) || "?"}
                         </div>
                       )}
                       <div>
