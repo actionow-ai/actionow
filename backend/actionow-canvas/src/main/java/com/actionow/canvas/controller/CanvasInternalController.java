@@ -71,7 +71,8 @@ public class CanvasInternalController {
             CanvasNodeResponse node = nodeService.createNode(nodeRequest, workspaceId, null);
 
             if (scriptName != null && !scriptName.isEmpty()) {
-                nodeService.updateCachedInfo(CanvasConstants.EntityType.SCRIPT, scriptId, scriptName, null);
+                // 通知前端刷新 — 旧 updateCachedInfo 是 no-op，新 API 会拉取最新 entityDetail 再 WS 推送
+                nodeService.notifyEntityRefreshed(CanvasConstants.EntityType.SCRIPT, scriptId);
             }
 
             log.info("剧本节点创建成功: canvasId={}, nodeId={}, scriptId={}",

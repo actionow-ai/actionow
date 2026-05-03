@@ -55,4 +55,48 @@ class EntityCacheServiceTest {
         assertEquals(2, result.size());
         verify(projectFeignClient, times(1)).batchGetScripts(anyList());
     }
+
+    @Test
+    void evictCache_shouldDeleteRedisKey() {
+        entityCacheService.evictCache("ASSET", "asset-123");
+        verify(redisTemplate, times(1)).delete("canvas:entity:asset:asset-123");
+    }
+
+    @Test
+    void cacheEntityFromPayload_shouldWriteFullPayloadIntoCache() throws Exception {
+        when(redisTemplate.opsForValue()).thenReturn(valueOps);
+        when(objectMapper.writeValueAsString(any(EntityInfo.class))).thenReturn("{}");
+
+        Map<String, Object> payload = Map.of(
+            "id", "asset-1",
+            "name", "图1",
+            "fileUrl", "https://cdn.example.com/x.png",
+            "fileKey", "tenant/x.png",
+            "mimeType", "image/png",
+            "generationStatus", "COMPLETED"
+        );
+
+        entityCacheService.cacheEntityFromPayload("ASSET", "asset-1", payload);
+
+        // 验证 EntityInfo 被序列化（writeValueAsString 接收带 detail 的 EntityInfo）
+        org.mockito.ArgumentCaptor<EntityInfo> captor = org.mockito.ArgumentCaptor.forClass(EntityInfo.class);
+        verify(objectMapper).writeValueAsString(captor.capture());
+        EntityInfo cached = captor.getValue();
+
+        assertEquals("asset-1", cached.getId());
+        assertEquals("图1", cached.getName());
+        // ASSET 没 coverUrl 字段，应回退到 fileUrl 作为缩略图候选
+        assertEquals("https://cdn.example.com/x.png", cached.getCoverUrl());
+        // 完整 payload 必须落入 detail map（前端通过 toEntityDetailMap 拿到 fileUrl/fileKey/...）
+        assertEquals("https://cdn.example.com/x.png", cached.getDetail().get("fileUrl"));
+        assertEquals("tenant/x.png", cached.getDetail().get("fileKey"));
+        assertEquals("COMPLETED", cached.getDetail().get("generationStatus"));
+    }
+
+    @Test
+    void cacheEntityFromPayload_shouldNoOpOnNullPayload() {
+        entityCacheService.cacheEntityFromPayload("ASSET", "x", null);
+        entityCacheService.cacheEntityFromPayload("ASSET", "x", Map.of());
+        verifyNoInteractions(objectMapper);
+    }
 }

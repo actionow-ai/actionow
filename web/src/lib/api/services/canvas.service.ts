@@ -261,6 +261,14 @@ class CanvasService {
     return api.delete(`/api/canvas/nodes/${nodeId}`);
   }
 
+  /** 用 sourceAsset 的文件信息替换节点关联 asset（AI 生成回填） */
+  async replaceAssetContent(nodeId: string, sourceAssetId: string) {
+    return api.post<CanvasNodeDTO>(
+      `/api/canvas/nodes/${nodeId}/replace-asset-content`,
+      { sourceAssetId },
+    );
+  }
+
   // Node batch operations
   async batchUpdateNodes(nodeIds: string[], deltaX?: number, deltaY?: number) {
     return api.post("/api/canvas/nodes/batch/update", {

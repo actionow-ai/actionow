@@ -17,6 +17,7 @@ import com.actionow.canvas.event.CanvasEventPublisher;
 import com.actionow.canvas.event.NodeCreatedEvent;
 import com.actionow.canvas.event.NodeDeletedEvent;
 import com.actionow.canvas.event.NodeUpdatedEvent;
+import com.actionow.canvas.feign.AssetFeignClient;
 import com.actionow.canvas.feign.ProjectFeignClient;
 import com.actionow.canvas.mapper.CanvasMapper;
 import com.actionow.canvas.mapper.CanvasNodeMapper;
@@ -56,11 +57,13 @@ public class CanvasNodeServiceImpl implements CanvasNodeService {
     private final CanvasNodeMapper nodeMapper;
     private final CanvasMapper canvasMapper;
     private final ProjectFeignClient projectFeignClient;
+    private final AssetFeignClient assetFeignClient;
     private final CanvasEventPublisher eventPublisher;
     @Lazy
     private final CanvasEdgeService edgeService;
     private final OperationHistoryService historyService;
     private final NodeEnrichmentService nodeEnrichmentService;
+    private final com.actionow.canvas.websocket.CanvasWebSocketHandler webSocketHandler;
 
     @Override
     public List<CanvasNodeResponse> getNodesByViewport(String canvasId, ViewportQueryRequest request) {
@@ -663,13 +666,89 @@ public class CanvasNodeServiceImpl implements CanvasNodeService {
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void updateCachedInfo(String entityType, String entityId, String name, String thumbnailUrl) {
+    public void notifyEntityRefreshed(String entityType, String entityId) {
+        notifyEntityRefreshed(entityType, entityId, null);
+    }
+
+    @Override
+    public void notifyEntityRefreshed(String entityType, String entityId,
+                                       java.util.Map<String, Object> fallbackPayload) {
         List<CanvasNode> nodes = nodeMapper.selectByEntity(entityType, entityId);
-        for (CanvasNode node : nodes) {
-            nodeMapper.updateById(node);
+        if (nodes.isEmpty()) {
+            return;
         }
-        log.info("更新节点缓存信息: entityType={}, entityId={}, count={}", entityType, entityId, nodes.size());
+
+        // 主路径：直拉 project Feign 拿最新 entityDetail（含 fileUrl/fileKey/...）
+        java.util.List<com.actionow.canvas.dto.node.CanvasNodeResponse> responses = nodes.stream()
+                .map(com.actionow.canvas.dto.node.CanvasNodeResponse::fromEntity)
+                .collect(java.util.stream.Collectors.toList());
+        boolean enrichOk = false;
+        try {
+            nodeEnrichmentService.enrichEntityDetail(responses);
+            enrichOk = responses.stream().anyMatch(r -> r.getEntityDetail() != null);
+        } catch (Exception e) {
+            log.warn("[notifyEntityRefreshed] enrich failed: entityId={}, err={}", entityId, e.getMessage());
+        }
+
+        // 兜底路径：enrich 拉不到时用 MQ payload 直接拼 entityDetail，避免静默失败让前端永久看不到新数据
+        if (!enrichOk && fallbackPayload != null && !fallbackPayload.isEmpty()) {
+            java.util.Map<String, Object> detailFromPayload = buildEntityDetailFromPayload(
+                    entityType, entityId, fallbackPayload);
+            for (com.actionow.canvas.dto.node.CanvasNodeResponse resp : responses) {
+                resp.setEntityDetail(detailFromPayload);
+            }
+            log.info("[notifyEntityRefreshed] using fallback payload for entityDetail: entityId={}", entityId);
+        }
+
+        // WS 广播：broadcastToCanvas 不排除任何用户（含原发起者）
+        for (com.actionow.canvas.dto.node.CanvasNodeResponse resp : responses) {
+            java.util.Map<String, Object> data = buildBroadcastData(resp);
+            com.actionow.canvas.websocket.CanvasWebSocketMessage msg =
+                    com.actionow.canvas.websocket.CanvasWebSocketMessage.nodeUpdated(data);
+            webSocketHandler.broadcastToCanvas(resp.getCanvasId(), msg);
+        }
+        log.info("[notifyEntityRefreshed] entityType={}, entityId={}, broadcastNodeCount={}, enrichOk={}",
+                entityType, entityId, nodes.size(), enrichOk);
+    }
+
+    /**
+     * 把 MQ event.data 的扁平字段拼成前端期望的 entityDetail map。
+     * 兜底使用：enrich 失败时仍能让前端看到 fileUrl/coverUrl 等关键字段。
+     */
+    private java.util.Map<String, Object> buildEntityDetailFromPayload(
+            String entityType, String entityId, java.util.Map<String, Object> payload) {
+        java.util.Map<String, Object> detail = new java.util.HashMap<>(payload);
+        detail.putIfAbsent("id", entityId);
+        detail.putIfAbsent("entityType", entityType);
+        return detail;
+    }
+
+    /**
+     * 构造 WS 广播 payload：基础字段 + entityDetail。
+     * 与 WebSocketBroadcastEventListener.buildNodeData 不同的是这里**带** entityDetail，
+     * 因为本路径是 entity 变更回填，前端必须感知最新 entityDetail（fileUrl/coverUrl/...）。
+     */
+    private java.util.Map<String, Object> buildBroadcastData(
+            com.actionow.canvas.dto.node.CanvasNodeResponse resp) {
+        java.util.Map<String, Object> data = new java.util.HashMap<>();
+        data.put("id", resp.getId());
+        data.put("canvasId", resp.getCanvasId());
+        data.put("workspaceId", resp.getWorkspaceId());
+        data.put("entityType", resp.getEntityType());
+        data.put("entityId", resp.getEntityId());
+        data.put("layer", resp.getLayer());
+        data.put("parentNodeId", resp.getParentNodeId());
+        data.put("positionX", resp.getPositionX());
+        data.put("positionY", resp.getPositionY());
+        data.put("width", resp.getWidth());
+        data.put("height", resp.getHeight());
+        data.put("collapsed", resp.getCollapsed());
+        data.put("locked", resp.getLocked());
+        data.put("zIndex", resp.getZIndex());
+        if (resp.getEntityDetail() != null) {
+            data.put("entityDetail", resp.getEntityDetail());
+        }
+        return data;
     }
 
     /**
@@ -770,6 +849,60 @@ public class CanvasNodeServiceImpl implements CanvasNodeService {
                     node.getEntityType(), node.getEntityId(),
                     userId, node.getWorkspaceId()));
         }
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public CanvasNodeResponse replaceAssetContent(String nodeId, String sourceAssetId, String userId) {
+        CanvasNode node = getNodeOrThrow(nodeId);
+
+        if (!CanvasConstants.EntityType.ASSET.equals(node.getEntityType())) {
+            throw new BusinessException(ResultCode.PARAM_INVALID, "只有 ASSET 类型节点支持替换内容");
+        }
+
+        String targetAssetId = node.getEntityId();
+        if (!StringUtils.hasText(targetAssetId)) {
+            throw new BusinessException(ResultCode.PARAM_INVALID, "节点未关联 asset");
+        }
+
+        // 1. 拉取源 asset 文件信息
+        Result<Map<String, Object>> sourceResult = assetFeignClient.getAssetDetail(node.getWorkspaceId(), sourceAssetId);
+        if (sourceResult == null || !sourceResult.isSuccess() || sourceResult.getData() == null) {
+            String errorMsg = sourceResult != null ? sourceResult.getMessage() : "Project 服务不可用";
+            log.error("获取源素材失败: sourceAssetId={}, error={}", sourceAssetId, errorMsg);
+            throw new BusinessException(ResultCode.INTERNAL_ERROR, "获取源素材失败: " + errorMsg);
+        }
+        Map<String, Object> source = sourceResult.getData();
+
+        // 2. 构造 fileInfo 写回目标 asset
+        Map<String, Object> fileInfo = new HashMap<>();
+        if (source.get("fileUrl") != null) fileInfo.put("fileUrl", source.get("fileUrl"));
+        if (source.get("thumbnailUrl") != null) fileInfo.put("thumbnailUrl", source.get("thumbnailUrl"));
+        if (source.get("fileSize") != null) fileInfo.put("fileSize", source.get("fileSize"));
+        if (source.get("mimeType") != null) fileInfo.put("mimeType", source.get("mimeType"));
+        if (source.get("extraInfo") != null) fileInfo.put("metaInfo", source.get("extraInfo"));
+
+        Result<Void> updateResult = assetFeignClient.updateFileInfo(targetAssetId, fileInfo);
+        if (updateResult == null || !updateResult.isSuccess()) {
+            String errorMsg = updateResult != null ? updateResult.getMessage() : "Project 服务不可用";
+            log.error("更新目标素材文件信息失败: targetAssetId={}, error={}", targetAssetId, errorMsg);
+            throw new BusinessException(ResultCode.INTERNAL_ERROR, "更新素材失败: " + errorMsg);
+        }
+
+        log.info("Canvas 替换 asset 内容成功: nodeId={}, sourceAssetId={}, targetAssetId={}",
+                nodeId, sourceAssetId, targetAssetId);
+
+        // 3. 发布节点更新事件 → ws 广播 → 其他客户端 enrich
+        eventPublisher.publishAsync(new NodeUpdatedEvent(node, copyNodeState(node), userId, node.getWorkspaceId()));
+
+        // 4. enrich 后返回（前端拿到新的 fileUrl/coverUrl）
+        CanvasNodeResponse response = CanvasNodeResponse.fromEntity(node);
+        try {
+            nodeEnrichmentService.enrich(java.util.Collections.singletonList(response));
+        } catch (Exception e) {
+            log.warn("replaceAssetContent enrich 失败: nodeId={}, error={}", nodeId, e.getMessage());
+        }
+        return response;
     }
 
     private CanvasNode getNodeOrThrow(String nodeId) {

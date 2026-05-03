@@ -48,6 +48,12 @@ class CanvasNodeServiceImplTest {
     @Mock
     private ProjectFeignClient projectFeignClient;
 
+    @Mock
+    private com.actionow.canvas.service.NodeEnrichmentService nodeEnrichmentService;
+
+    @Mock
+    private com.actionow.canvas.websocket.CanvasWebSocketHandler webSocketHandler;
+
     @InjectMocks
     private CanvasNodeServiceImpl canvasNodeService;
 
@@ -560,41 +566,85 @@ class CanvasNodeServiceImplTest {
     }
 
     @Nested
-    @DisplayName("更新缓存信息测试")
-    class UpdateCachedInfoTests {
+    @DisplayName("notifyEntityRefreshed 测试")
+    class NotifyEntityRefreshedTests {
 
         @Test
-        @DisplayName("更新实体缓存信息 - 成功")
-        void updateCachedInfo_success() {
-            // Given
+        @DisplayName("找到引用 entity 的所有 nodes 后 enrich + WS 广播")
+        void notifyEntityRefreshed_broadcasts() {
             CanvasNode node1 = new CanvasNode();
             node1.setId("node-1");
+            node1.setCanvasId(CANVAS_ID);
             node1.setEntityType(CanvasConstants.EntityType.CHARACTER);
             node1.setEntityId(ENTITY_ID);
 
             CanvasNode node2 = new CanvasNode();
             node2.setId("node-2");
+            node2.setCanvasId(CANVAS_ID);
             node2.setEntityType(CanvasConstants.EntityType.CHARACTER);
             node2.setEntityId(ENTITY_ID);
 
             when(nodeMapper.selectByEntity(CanvasConstants.EntityType.CHARACTER, ENTITY_ID))
                     .thenReturn(Arrays.asList(node1, node2));
-            when(nodeMapper.updateById(any(CanvasNode.class))).thenReturn(1);
 
-            // When
-            canvasNodeService.updateCachedInfo(
-                    CanvasConstants.EntityType.CHARACTER, ENTITY_ID,
-                    "Updated Name", "http://example.com/new-thumb.jpg");
+            canvasNodeService.notifyEntityRefreshed(CanvasConstants.EntityType.CHARACTER, ENTITY_ID);
 
-            // Then
-            verify(nodeMapper, times(2)).updateById(any(CanvasNode.class));
+            // 必须 enrich 一次（fresh entityDetail 来自 project Feign，绕开缓存）
+            verify(nodeEnrichmentService, times(1)).enrichEntityDetail(anyList());
+            // 两个 node 各广播一次（broadcastToCanvas 不排除任何用户，含原发起者）
+            verify(webSocketHandler, times(2))
+                    .broadcastToCanvas(eq(CANVAS_ID), any());
+        }
 
-            ArgumentCaptor<CanvasNode> captor = ArgumentCaptor.forClass(CanvasNode.class);
-            verify(nodeMapper, times(2)).updateById(captor.capture());
+        @Test
+        @DisplayName("enrich 抛异常时用 fallback payload 兜底广播 entityDetail")
+        void notifyEntityRefreshed_enrichFailsButPayloadFallsBack() {
+            CanvasNode node = new CanvasNode();
+            node.setId("n1");
+            node.setCanvasId(CANVAS_ID);
+            node.setEntityType(CanvasConstants.EntityType.ASSET);
+            node.setEntityId(ENTITY_ID);
 
-            List<CanvasNode> updatedNodes = captor.getAllValues();
-            for (CanvasNode node : updatedNodes) {
-            }
+            when(nodeMapper.selectByEntity(CanvasConstants.EntityType.ASSET, ENTITY_ID))
+                    .thenReturn(java.util.List.of(node));
+            doThrow(new RuntimeException("project Feign down"))
+                    .when(nodeEnrichmentService).enrichEntityDetail(anyList());
+
+            java.util.Map<String, Object> payload = java.util.Map.of(
+                    "id", ENTITY_ID,
+                    "fileUrl", "https://cdn.example.com/x.png",
+                    "generationStatus", "COMPLETED");
+
+            canvasNodeService.notifyEntityRefreshed(
+                    CanvasConstants.EntityType.ASSET, ENTITY_ID, payload);
+
+            // enrich 失败也仍要 broadcast（用 payload 兜底的 entityDetail）
+            org.mockito.ArgumentCaptor<com.actionow.canvas.websocket.CanvasWebSocketMessage> msgCaptor =
+                    org.mockito.ArgumentCaptor.forClass(
+                            com.actionow.canvas.websocket.CanvasWebSocketMessage.class);
+            verify(webSocketHandler, times(1)).broadcastToCanvas(eq(CANVAS_ID), msgCaptor.capture());
+
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, Object> data =
+                    (java.util.Map<String, Object>) msgCaptor.getValue().getData();
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, Object> entityDetail =
+                    (java.util.Map<String, Object>) data.get("entityDetail");
+            assertNotNull(entityDetail, "fallback 必须填上 entityDetail，否则前端 merge 仍是旧值");
+            assertEquals("https://cdn.example.com/x.png", entityDetail.get("fileUrl"));
+            assertEquals("COMPLETED", entityDetail.get("generationStatus"));
+        }
+
+        @Test
+        @DisplayName("没有 nodes 时不调用 enrich 和广播")
+        void notifyEntityRefreshed_noNodes_noOp() {
+            when(nodeMapper.selectByEntity(anyString(), anyString()))
+                    .thenReturn(java.util.Collections.emptyList());
+
+            canvasNodeService.notifyEntityRefreshed(CanvasConstants.EntityType.ASSET, "missing");
+
+            verify(nodeEnrichmentService, never()).enrichEntityDetail(anyList());
+            verify(webSocketHandler, never()).broadcastToCanvas(anyString(), any());
         }
     }
 }

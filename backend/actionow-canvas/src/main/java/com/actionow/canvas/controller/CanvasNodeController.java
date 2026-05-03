@@ -185,6 +185,20 @@ public class CanvasNodeController {
     }
 
     /**
+     * 用源 asset 的文件信息替换节点关联 asset 内容
+     * 用于 AI 生成完成后的回填
+     */
+    @PostMapping("/{nodeId}/replace-asset-content")
+    @RequireWorkspaceMember(minRole = WorkspaceRole.MEMBER)
+    public Result<CanvasNodeResponse> replaceAssetContent(
+            @PathVariable String nodeId,
+            @RequestBody @Valid ReplaceAssetContentRequest request) {
+        String userId = UserContextHolder.getUserId();
+        CanvasNodeResponse response = nodeService.replaceAssetContent(nodeId, request.getSourceAssetId(), userId);
+        return Result.success(response);
+    }
+
+    /**
      * 验证节点类型是否允许
      */
     @GetMapping("/validate")

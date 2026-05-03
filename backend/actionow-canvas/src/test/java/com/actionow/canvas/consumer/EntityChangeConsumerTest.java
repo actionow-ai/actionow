@@ -70,8 +70,9 @@ class EntityChangeConsumerTest {
 
         consumer.handleEntityChange(message, channel, 2L, false);
 
+        // 现在调用带 payload 的 5-arg 版本（payload=null 因为 event.getData() 为 null）
         verify(canvasSyncService, times(1)).handleEntityUpdated(
-            eq("SCRIPT"), eq("script-1"), isNull(), isNull()
+            eq("SCRIPT"), eq("script-1"), isNull(), isNull(), isNull()
         );
         verify(channel, times(1)).basicAck(2L, false);
     }

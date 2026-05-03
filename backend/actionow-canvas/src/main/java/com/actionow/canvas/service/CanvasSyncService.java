@@ -37,6 +37,17 @@ public interface CanvasSyncService {
     void handleEntityUpdated(String entityType, String entityId, String name, String thumbnailUrl);
 
     /**
+     * 处理实体更新事件（携带完整 payload 版本）。
+     * payload 是 MQ event.data 的全量字段（fileUrl/fileKey/mimeType/generationStatus 等）。
+     * 收到 payload 后实现可直接覆盖 Redis 缓存（无需 evict + 回源）+ WS 推送给前端。
+     */
+    default void handleEntityUpdated(String entityType, String entityId, String name,
+                                     String thumbnailUrl, java.util.Map<String, Object> payload) {
+        // 默认实现：忽略 payload，回退到旧路径（保持向后兼容）
+        handleEntityUpdated(entityType, entityId, name, thumbnailUrl);
+    }
+
+    /**
      * 处理实体删除事件
      * 删除所有包含该实体的节点和边
      *

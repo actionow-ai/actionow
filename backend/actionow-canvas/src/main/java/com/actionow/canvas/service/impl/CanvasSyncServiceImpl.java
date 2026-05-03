@@ -145,11 +145,6 @@ public class CanvasSyncServiceImpl implements CanvasSyncService {
         // 创建节点
         nodeService.createNode(nodeRequest, workspaceId, null);
 
-        // 更新缓存名称
-        if (name != null && !name.isEmpty()) {
-            nodeService.updateCachedInfo(entityType, entityId, name, null);
-        }
-
         log.info("自动创建画布节点成功: canvasId={}, entityType={}, entityId={}, layer={}",
                 canvas.getId(), entityType, entityId, layer);
     }
@@ -163,10 +158,8 @@ public class CanvasSyncServiceImpl implements CanvasSyncService {
             CanvasResponse canvas = canvasService.getOrCreateByScriptId(scriptId, workspaceId, null);
             log.info("Script 创建，画布已初始化: scriptId={}, canvasId={}", scriptId, canvas.getId());
 
-            // 更新缓存名称
-            if (name != null && !name.isEmpty()) {
-                nodeService.updateCachedInfo(CanvasConstants.EntityType.SCRIPT, scriptId, name, null);
-            }
+            // Script 创建时也通知前端刷新（旧代码用 updateCachedInfo 但本身是 no-op）
+            nodeService.notifyEntityRefreshed(CanvasConstants.EntityType.SCRIPT, scriptId);
         } catch (Exception e) {
             log.error("Script 创建时画布初始化失败: scriptId={}, error={}", scriptId, e.getMessage(), e);
         }
@@ -249,13 +242,27 @@ public class CanvasSyncServiceImpl implements CanvasSyncService {
 
     @Override
     public void handleEntityUpdated(String entityType, String entityId, String name, String thumbnailUrl) {
-        log.info("处理实体更新事件: entityType={}, entityId={}", entityType, entityId);
+        handleEntityUpdated(entityType, entityId, name, thumbnailUrl, null);
+    }
 
-        // 更新 Redis 缓存
-        entityCacheService.updateCache(entityType, entityId, name, thumbnailUrl);
+    @Override
+    public void handleEntityUpdated(String entityType, String entityId, String name, String thumbnailUrl,
+                                    java.util.Map<String, Object> payload) {
+        log.info("处理实体更新事件: entityType={}, entityId={}, hasPayload={}",
+                entityType, entityId, payload != null);
 
-        // 更新所有包含该实体的节点的缓存信息
-        nodeService.updateCachedInfo(entityType, entityId, name, thumbnailUrl);
+        if (payload != null && !payload.isEmpty()) {
+            // 全量覆盖缓存（含 fileUrl/fileKey/mimeType 等所有字段），后续读直接命中最新数据
+            entityCacheService.cacheEntityFromPayload(entityType, entityId, payload);
+        } else {
+            // 没有 payload 兜底：失效缓存让下次读回源 Feign。partial update 已被废弃，
+            // 因为它只支持 name/thumbnailUrl，会泄漏 fileUrl/fileKey 等字段。
+            entityCacheService.evictCache(entityType, entityId);
+        }
+
+        // 通知所有引用该实体的节点：F2 直接 WS 广播 NODE_UPDATED + entityDetail
+        // 传 payload 作为兜底：enrich Feign 失败时仍能让前端拿到 fileUrl 等关键字段
+        nodeService.notifyEntityRefreshed(entityType, entityId, payload);
     }
 
     @Override

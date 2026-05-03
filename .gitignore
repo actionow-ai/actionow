@@ -277,3 +277,4 @@ NOTES.local.md
 *.pid
 *.seed
 *.pid.lock
+ref_images/

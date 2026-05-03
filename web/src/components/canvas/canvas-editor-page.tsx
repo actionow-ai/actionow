@@ -6,7 +6,9 @@ import {
   Background,
   Controls,
   MiniMap,
+  NodeToolbar,
   Panel,
+  Position,
   useNodesState,
   useEdgesState,
   type Connection,
@@ -38,6 +40,7 @@ import { getErrorFromException } from "@/lib/api";
 import { useCanvasRealtime } from "./use-canvas-realtime";
 import { EntityNode } from "./entity-node";
 import { InlineMediaPicker, type MediaPickerType } from "./inline-media-picker";
+import { PromptBar, type CanvasMediaType } from "./prompt-bar";
 
 type LayoutStrategy = "GRID" | "TREE" | "FORCE";
 const LAYOUT_BUTTONS: Array<{ key: LayoutStrategy; label: string; icon: typeof User }> = [
@@ -65,15 +68,37 @@ function readNodeLabel(node: CanvasNodeDTO): string {
   return "节点";
 }
 
-function nodeToReactFlow(node: CanvasNodeDTO): Node {
+/**
+ * 从 entityDetail.generationStatus 派生 loading 状态。
+ * 让刷新后仍能正确显示"生成中"——transient set 只是优化首次渲染体感。
+ */
+function isAssetGenerating(node: CanvasNodeDTO): boolean {
+  if (node.entityType !== "ASSET") return false;
+  const detail = node.entityDetail as { generationStatus?: unknown } | undefined;
+  const status = typeof detail?.generationStatus === "string" ? detail.generationStatus : undefined;
+  return status === "GENERATING" || status === "PENDING";
+}
+
+function nodeToReactFlow(node: CanvasNodeDTO, transientGenerating = false): Node {
+  const isGenerating = transientGenerating || isAssetGenerating(node);
+  // 初始尺寸：DB 有值才强制（保留 resize 后的状态）；
+  // DB 没值就让节点按 CSS 自然撑开（min-width/min-height 由组件内部控制）
+  const hasExplicitSize = node.width != null && node.height != null
+    && node.width > 0 && node.height > 0;
   return {
     id: node.id,
     type: "entity",
     position: { x: node.positionX, y: node.positionY },
+    ...(hasExplicitSize ? {
+      width: node.width,
+      height: node.height,
+      style: { width: node.width, height: node.height },
+    } : {}),
     data: {
       label: readNodeLabel(node),
       entityType: node.entityType,
       nodeData: node,
+      isGenerating,
     },
   };
 }
@@ -121,6 +146,8 @@ export function CanvasEditorPage({ canvasId }: { canvasId: string }) {
     fromNodeId: string | null;
   } | null>(null);
   const [hasNonScriptNodes, setHasNonScriptNodes] = useState(false);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [generatingNodeIds, setGeneratingNodeIds] = useState<Set<string>>(new Set());
   const flowRef = useRef<ReactFlowInstance | null>(null);
   const nodeMetaRef = useRef<Map<string, { entityType: string; entityId: string }>>(new Map());
   /** entity→nodeId 反查（用于 edgeToReactFlow fallback） */
@@ -137,11 +164,15 @@ export function CanvasEditorPage({ canvasId }: { canvasId: string }) {
     setHasNonScriptNodes(hasOther);
   }, []);
 
-  const buildReactFlowNodes = useCallback((dtoList: CanvasNodeDTO[]): Node[] => {
-    return dtoList
-      .filter((n) => n.nodeType !== "GROUP")
-      .map(nodeToReactFlow);
-  }, []);
+  const buildReactFlowNodes = useCallback(
+    (dtoList: CanvasNodeDTO[], generating?: Set<string>): Node[] => {
+      const set = generating ?? generatingNodeIds;
+      return dtoList
+        .filter((n) => n.nodeType !== "GROUP")
+        .map((n) => nodeToReactFlow(n, set.has(n.id)));
+    },
+    [generatingNodeIds]
+  );
 
   const ingestNodes = useCallback(
     (nodeList: CanvasNodeDTO[]) => {
@@ -184,6 +215,20 @@ export function CanvasEditorPage({ canvasId }: { canvasId: string }) {
     ingestNodes(nodeList);
     ingestEdges(edgeList);
   }, [canvasId, ingestEdges, ingestNodes]);
+
+  // 同步 generatingNodeIds 到 React Flow 节点的 data.isGenerating
+  // transient set + asset.generationStatus 双源：set 提供即时反馈，status 保证刷新后仍正确
+  useEffect(() => {
+    setNodes((prev) =>
+      prev.map((n) => {
+        const data = n.data as Record<string, unknown>;
+        const dto = data.nodeData as CanvasNodeDTO | undefined;
+        const isGen = generatingNodeIds.has(n.id) || (dto ? isAssetGenerating(dto) : false);
+        if (data.isGenerating === isGen) return n;
+        return { ...n, data: { ...data, isGenerating: isGen } };
+      })
+    );
+  }, [generatingNodeIds, setNodes]);
 
   // 初始化加载
   useEffect(() => {
@@ -235,10 +280,13 @@ export function CanvasEditorPage({ canvasId }: { canvasId: string }) {
         nodesDtoRef.current = Array.from(dtoMap.values());
       }
 
-      // 2) 拖拽结束时（dragging=false）持久化
+      // 2) 拖拽结束时持久化
+      // 严格匹配 dragging===false（用户结束拖拽），跳过 dragging===undefined 的 programmatic
+      // 变更（resize 时控制柄会让 React Flow 同步发 position 变更，dragging 字段缺省 →
+      // !change.dragging 会把它误认成"拖拽结束" → 每帧都 PUT 把后端打爆）
       const finished: Array<{ nodeId: string; positionX: number; positionY: number }> = [];
       for (const change of changes) {
-        if (change.type === "position" && !change.dragging && change.position) {
+        if (change.type === "position" && change.dragging === false && change.position) {
           finished.push({
             nodeId: change.id,
             positionX: change.position.x,
@@ -246,20 +294,56 @@ export function CanvasEditorPage({ canvasId }: { canvasId: string }) {
           });
         }
       }
-      if (finished.length === 0) return;
+
+      // 3) Resize 结束时（resizing=false）持久化新尺寸
+      const resized: Array<{ nodeId: string; width: number; height: number }> = [];
+      for (const change of changes) {
+        if (change.type === "dimensions" && change.dimensions
+            && change.resizing === false) {
+          resized.push({
+            nodeId: change.id,
+            width: change.dimensions.width,
+            height: change.dimensions.height,
+          });
+          // 同步更新 dto ref
+          const dto = dtoMap.get(change.id);
+          if (dto) {
+            dto.width = change.dimensions.width;
+            dto.height = change.dimensions.height;
+            nodesDtoRef.current = Array.from(dtoMap.values());
+          }
+        }
+      }
+
+      if (finished.length === 0 && resized.length === 0) return;
       (async () => {
         try {
-          if (finished.length === 1) {
+          if (finished.length === 1 && resized.length === 0) {
             const f = finished[0];
             await canvasService.updateNode(f.nodeId, {
               positionX: f.positionX,
               positionY: f.positionY,
             });
-          } else {
+          } else if (finished.length > 1 && resized.length === 0) {
             await canvasService.batchUpdatePositions(finished);
+          } else {
+            // resize 总是按 nodeId 单独 PUT；位置变更与 resize 同一 nodeId 也合并
+            const updates = new Map<string, { positionX?: number; positionY?: number; width?: number; height?: number }>();
+            for (const f of finished) {
+              updates.set(f.nodeId, { positionX: f.positionX, positionY: f.positionY });
+            }
+            for (const r of resized) {
+              const prev = updates.get(r.nodeId) ?? {};
+              updates.set(r.nodeId, { ...prev, width: r.width, height: r.height });
+            }
+            await Promise.all(
+              Array.from(updates.entries()).map(([nodeId, body]) =>
+                canvasService.updateNode(nodeId, body),
+              ),
+            );
           }
         } catch (error) {
-          console.error("Failed to persist node positions:", error);
+          console.error("Failed to persist node changes:", error);
           toast.danger(getErrorFromException(error, locale));
         }
       })();
@@ -615,6 +699,49 @@ export function CanvasEditorPage({ canvasId }: { canvasId: string }) {
     [resolvedTheme]
   );
 
+  // 选中的 ASSET 节点（含 mediaType + 父节点列表）
+  const selectedAsset = useMemo(() => {
+    if (!selectedNodeId) return null;
+    const dto = nodesDtoRef.current.find((n) => n.id === selectedNodeId);
+    if (!dto || dto.entityType !== "ASSET") return null;
+    const detail = (dto.entityDetail ?? {}) as { mediaType?: unknown; assetType?: unknown };
+    const raw = (detail.mediaType ?? detail.assetType ?? "IMAGE");
+    const mediaType = (typeof raw === "string" ? raw : "IMAGE").toUpperCase() as CanvasMediaType;
+
+    // 父节点：所有 target 是当前节点的边的 source
+    const parents: CanvasNodeDTO[] = [];
+    if (dto.entityType && dto.entityId) {
+      for (const e of edgesDtoRef.current) {
+        if (e.targetType === dto.entityType && e.targetId === dto.entityId) {
+          const parentDto = nodesDtoRef.current.find(
+            (n) => n.entityType === e.sourceType && n.entityId === e.sourceId
+          );
+          if (parentDto) parents.push(parentDto);
+        }
+      }
+    }
+
+    return { dto, mediaType, parents };
+  }, [selectedNodeId, nodes, edges]);
+
+  const handleGenerationStart = useCallback((nodeId: string) => {
+    setGeneratingNodeIds((prev) => {
+      const next = new Set(prev);
+      next.add(nodeId);
+      return next;
+    });
+  }, []);
+
+  const handleGenerationFinish = useCallback((nodeId: string) => {
+    setGeneratingNodeIds((prev) => {
+      const next = new Set(prev);
+      next.delete(nodeId);
+      return next;
+    });
+    // BE 已经把 fileUrl 写到 asset；重新拉 canvas 让节点的 entityDetail.fileUrl 显示出来
+    void reloadCanvas();
+  }, [reloadCanvas]);
+
   if (loading) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-background">
@@ -640,7 +767,13 @@ export function CanvasEditorPage({ canvasId }: { canvasId: string }) {
           onEdgesDelete={handleEdgesDelete}
           onConnectStart={onConnectStart}
           onConnectEnd={onConnectEnd}
-          onPaneClick={() => setPicker(null)}
+          onPaneClick={() => {
+            setPicker(null);
+            setSelectedNodeId(null);
+          }}
+          onSelectionChange={({ nodes: sel }) => {
+            setSelectedNodeId(sel.length === 1 ? sel[0].id : null);
+          }}
           onDoubleClick={handlePaneDoubleClick}
           deleteKeyCode={["Delete", "Backspace"]}
           zoomOnDoubleClick={false}
@@ -650,6 +783,27 @@ export function CanvasEditorPage({ canvasId }: { canvasId: string }) {
           <Background />
           <Controls />
           <MiniMap />
+
+          {/* PromptBar：跟随选中的 ASSET 节点（NodeToolbar 自动跟踪 + 不随 zoom 缩放） */}
+          {selectedAsset && (
+            <NodeToolbar
+              nodeId={selectedAsset.dto.id}
+              position={Position.Bottom}
+              offset={16}
+              isVisible
+            >
+              <PromptBar
+                key={selectedAsset.dto.id}
+                nodeId={selectedAsset.dto.id}
+                assetId={selectedAsset.dto.entityId ?? selectedAsset.dto.id}
+                scriptId={scriptId}
+                mediaType={selectedAsset.mediaType}
+                parents={selectedAsset.parents}
+                onGenerationStart={() => handleGenerationStart(selectedAsset.dto.id)}
+                onGenerationFinish={() => handleGenerationFinish(selectedAsset.dto.id)}
+              />
+            </NodeToolbar>
+          )}
 
           {/* 左上角：logo + 剧本名 + 工具按钮 */}
           <Panel position="top-left" className="m-4">
@@ -724,6 +878,7 @@ export function CanvasEditorPage({ canvasId }: { canvasId: string }) {
           onDismiss={() => setPicker(null)}
         />
       )}
+
     </div>
   );
 }

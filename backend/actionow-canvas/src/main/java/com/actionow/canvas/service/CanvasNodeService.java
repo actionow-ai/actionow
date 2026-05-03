@@ -104,9 +104,24 @@ public interface CanvasNodeService {
     boolean validateNodeType(String canvasId, String entityType);
 
     /**
-     * 更新节点缓存信息
+     * 通知所有引用了该实体的节点：实体已变更，需要让前端重新加载 entityDetail。
+     *
+     * 实现：
+     *  - 找出所有 entity_type/entity_id 匹配的节点
+     *  - 用 NodeEnrichmentService 拉最新 entityDetail（直接 project Feign，不读缓存）
+     *  - 通过 webSocketHandler.broadcastToCanvas 推 NODE_UPDATED + entityDetail 给所有用户
      */
-    void updateCachedInfo(String entityType, String entityId, String name, String thumbnailUrl);
+    void notifyEntityRefreshed(String entityType, String entityId);
+
+    /**
+     * notifyEntityRefreshed 的 payload 兜底版本：当传入 payload 时，
+     * 一旦 enrich 失败（Feign 不可达 / 上游慢 / 异常），用 payload 直接构建 entityDetail 广播，
+     * 避免 silent failure 让前端永久看不到新数据。
+     */
+    default void notifyEntityRefreshed(String entityType, String entityId,
+                                        java.util.Map<String, Object> fallbackPayload) {
+        notifyEntityRefreshed(entityType, entityId);
+    }
 
     /**
      * 批量更新节点
@@ -117,4 +132,15 @@ public interface CanvasNodeService {
      * 批量删除节点
      */
     void batchDelete(List<String> nodeIds, String userId);
+
+    /**
+     * 用 sourceAsset 的文件信息替换节点关联 asset 的内容
+     * 用于 AI 生成完成后的回填：节点 entityId 不变，仅 fileUrl/coverUrl 等更新
+     *
+     * @param nodeId        目标节点ID（必须是 ASSET 类型）
+     * @param sourceAssetId 提供内容的源 asset ID
+     * @param userId        操作用户ID
+     * @return 更新后的节点
+     */
+    CanvasNodeResponse replaceAssetContent(String nodeId, String sourceAssetId, String userId);
 }

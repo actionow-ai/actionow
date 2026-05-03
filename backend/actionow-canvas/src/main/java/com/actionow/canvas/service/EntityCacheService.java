@@ -184,6 +184,52 @@ public class EntityCacheService {
     }
 
     /**
+     * 用 MQ 事件 data payload 覆盖写入缓存。
+     * 调用方（EntityChangeConsumer）拿到 project 发来的完整 asset/script JSON 后调用此方法，
+     * 让缓存立即指向最新数据，避免下一次读再 round-trip 回 project Feign。
+     *
+     * 只识别能映射到 EntityInfo 的字段（id/name/coverUrl 等）；额外字段（fileUrl/fileKey/...）
+     * 落入 detail map，最终通过 toEntityDetailMap() 暴露给前端。
+     */
+    public void cacheEntityFromPayload(String entityType, String entityId, Map<String, Object> payload) {
+        if (payload == null || payload.isEmpty()) {
+            return;
+        }
+        try {
+            EntityInfo entity = new EntityInfo();
+            entity.setId(entityId);
+            entity.setEntityType(entityType);
+            Object name = payload.get("name");
+            Object title = payload.get("title");
+            entity.setName(name instanceof String s ? s : title instanceof String s2 ? s2 : null);
+            Object desc = payload.get("description");
+            entity.setDescription(desc instanceof String s ? s : null);
+            // ASSET 没有 coverUrl，用 fileUrl/thumbnailUrl 作为封面候选
+            for (String key : new String[]{"coverUrl", "thumbnailUrl", "fileUrl", "url"}) {
+                Object v = payload.get(key);
+                if (v instanceof String s && !s.isBlank()) {
+                    entity.setCoverUrl(s);
+                    break;
+                }
+            }
+            Object status = payload.get("status");
+            entity.setStatus(status instanceof String s ? s : null);
+            Object version = payload.get("version");
+            if (version instanceof Number n) entity.setVersion(n.intValue());
+
+            // 把 payload 的剩余字段（含 fileUrl/fileKey/mimeType/fileSize/generationStatus 等）
+            // 全量塞进 detail map，前端 NodeEnrichmentService.toEntityDetailMap 会平铺出来
+            Map<String, Object> detail = new HashMap<>(payload);
+            entity.setDetail(detail);
+
+            cacheEntity(entityType, entityId, entity);
+        } catch (Exception e) {
+            log.warn("[cacheEntityFromPayload] failed: entityType={}, entityId={}, err={}",
+                    entityType, entityId, e.getMessage());
+        }
+    }
+
+    /**
      * 失效缓存（实体删除时调用）
      *
      * @param entityType 实体类型
